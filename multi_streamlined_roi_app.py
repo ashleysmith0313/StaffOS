@@ -1,102 +1,73 @@
 # multi_streamlined_roi_app.py
 
+"""
+This Streamlit app models ROI for three healthcare staffing categories:
+1. Locum Tenens
+2. Travel Nursing
+3. Allied Health
+"""
+
 import streamlit as st
 
-st.set_page_config(page_title="Multi-Path ROI Calculator", layout="centered")
-st.title("🏥 Workforce ROI Intelligence Calculator")
-st.markdown("**Choose Staffing Type to Begin**")
+st.set_page_config(page_title="StaffOS ROI Platform", layout="wide")
+st.title("📊 StaffOS Unified ROI Calculator")
+st.markdown("**Smarter Staffing. All in One Place.**")
 
-staffing_type = st.selectbox("Staffing Type", [
-    "Physician (Locum)",
-    "Nursing",
-    "Allied Health"
-])
+# Placeholder for service line selection and candidate mapping (future integration)
+st.markdown("### Coming Soon: RadiusOS Mapping + ShiftSync ROI")
 
-# ---------------------------- LOCUMS ---------------------------- #
-if staffing_type == "Physician (Locum)":
-    st.header("📈 Locum ROI Inputs")
-    beds = st.number_input("Beds Covered", value=20)
-    revenue_per_bed = st.number_input("Revenue per Bed per Day ($)", value=7500)
-    cost_per_bed = st.number_input("Cost per Bed per Day ($)", value=4000)
-    referrals = st.number_input("Referrals per Bed", value=1.2)
-    referral_value = st.number_input("Revenue per Referral ($)", value=900)
+st.header("🏥 ROI Calculator: Select Your Staffing Type")
 
-    locum_hourly = st.number_input("Locum Hourly Rate ($)", value=265)
-    locum_hours = st.number_input("Hours per Shift", value=10)
-    travel_cost = st.number_input("Travel/Housing per Day ($)", value=390)
-    ftes = st.number_input("Locum FTEs", value=1)
+staffing_type = st.selectbox("Staffing Category", ["Locum Tenens", "Travel Nursing", "Allied Health"])
 
-    gross = beds * revenue_per_bed
-    cost = beds * cost_per_bed
-    referral_rev = beds * referrals * referral_value
-    locum_total = (locum_hourly * locum_hours + travel_cost) * ftes
+# Shared Inputs
+st.subheader("🔧 Shift Setup")
+total_beds = st.number_input("Total Beds in Unit", min_value=1, value=18)
+occupancy_pct = st.slider("% of Beds Staffed Without Temp Staffing", 0, 100, 70)
 
-    net = gross + referral_rev - cost - locum_total
+# Locum Logic
+if staffing_type == "Locum Tenens":
+    st.subheader("🧑‍⚕️ Locum Inputs")
+    hourly_rate = st.number_input("Hourly Rate ($)", value=265)
+    hours_per_shift = st.number_input("Hours per Shift", value=10)
+    travel_cost = st.number_input("Travel/Housing Cost per Day", value=390)
+    locums_per_shift = st.number_input("Locums per Shift", value=1)
+    utilization = st.slider("% Locum Utilization (Additional Coverage)", 0, 100, 80)
+    
+    revenue_per_bed = st.number_input("Revenue per Bed per Day ($)", value=8000)
+    cost_per_bed = st.number_input("Cost per Bed per Day ($)", value=4500)
+    referral_revenue = st.number_input("Referral Revenue per Bed ($)", value=700)
 
-    st.subheader("💰 ROI Output")
-    st.metric("Net ROI (Per Day)", f"${net:,.0f}")
-    st.metric("Annualized ROI", f"${net * 365:,.0f}")
+    staffed_beds = total_beds * (occupancy_pct + utilization) / 100
+    gross_revenue = staffed_beds * revenue_per_bed
+    gross_referral = staffed_beds * referral_revenue
+    operating_cost = staffed_beds * cost_per_bed
 
-# ---------------------------- NURSING ---------------------------- #
-elif staffing_type == "Nursing":
-    st.header("🩺 Nursing ROI Inputs")
-    beds = st.number_input("Beds Affected", value=20)
-    rn_ratio = st.number_input("RN:Patient Ratio", value=1.0/4.0)
-    traveler_cost = st.number_input("Traveler RN Hourly Cost ($)", value=95.0)
-    los_baseline = st.number_input("Baseline LOS (days)", value=4.8)
-    los_reduction_pct = st.slider("LOS Reduction %", 0, 100, 12)
+    total_locum_cost = (hourly_rate * hours_per_shift + travel_cost) * locums_per_shift
+    annual_locum_cost = total_locum_cost * 365
 
-    total_rns = int(beds * rn_ratio)
-    los_saved = los_baseline * (los_reduction_pct / 100)
-    bed_days_gained = beds * los_saved
-    traveler_daily_cost = traveler_cost * 12 * total_rns  # assume 12 hr shifts
+    net_margin = gross_revenue + gross_referral - operating_cost - total_locum_cost
+    annual_net_margin = net_margin * 365
 
-    value_of_bed_day = st.number_input("Avg Revenue per Bed Day ($)", value=2750)
-    net_gain = bed_days_gained * value_of_bed_day - traveler_daily_cost
+    missed_beds = total_beds - staffed_beds
+    missed_revenue = missed_beds * (revenue_per_bed + referral_revenue - cost_per_bed)
+    annual_missed = missed_revenue * 365
 
-    st.subheader("💰 Cost Avoidance Output")
-    st.metric("LOS-Driven Bed Days Gained", f"{bed_days_gained:,.1f}")
-    st.metric("Net Savings (Per Day)", f"${net_gain:,.0f}")
-    st.metric("Annualized Value", f"${net_gain * 365:,.0f}")
+    st.subheader("💰 Results")
+    st.metric("Staffed Beds This Shift", int(staffed_beds))
+    st.metric("Net Margin (After Locum Cost)", f"${net_margin:,.0f}")
+    
+    if utilization > 0:
+        st.markdown(f"### 📈 **Annualized Impact with Locums**")
+        st.success(f"**Net ROI: ${annual_net_margin:,.0f}**\n\nLocum Cost: ${annual_locum_cost:,.0f}")
+    else:
+        st.markdown(f"### 📉 **Annualized Missed Opportunity Without Locums**")
+        st.markdown(f"<div style='background-color:#990000;color:white;padding:1rem;border-radius:8px;'>Annualized Net Loss: <strong>(${annual_missed:,.0f})</strong></div>", unsafe_allow_html=True)
 
-# ---------------------------- ALLIED ---------------------------- #
-else:
-    st.header("🧪 Allied ROI Inputs")
-    st.markdown("_Estimate the impact of delays in diagnostics, rehab, etc._")
-    delayed_procs = st.number_input("Delayed Procedures/Day", value=8)
-    avg_proc_revenue = st.number_input("Avg Revenue per Procedure ($)", value=3200)
-    per_diem_cost = st.number_input("Per Diem/Traveler Cost ($)", value=850)
+# Add Travel Nursing and Allied logic later
+if staffing_type != "Locum Tenens":
+    st.info("Only Locum ROI is active. Other categories coming soon!")
 
-    recovered_revenue = delayed_procs * avg_proc_revenue
-    net_roi = recovered_revenue - per_diem_cost
-
-    st.subheader("💰 ROI Output")
-    st.metric("Recovered Revenue (Per Day)", f"${recovered_revenue:,.0f}")
-    st.metric("Net ROI (Daily)", f"${net_roi:,.0f}")
-    st.metric("Annualized ROI", f"${net_roi * 365:,.0f}")
-
+# Footer
 st.markdown("---")
-st.caption("🔄 Built for Physician, Nursing, and Allied ROI Modeling")
-
-# --- Requirements.txt ---
-# streamlit
-# pandas
-
-# --- README.md ---
-# Multi-Path Healthcare ROI Calculator
-
-## What This App Does
-This Streamlit app models ROI for three healthcare staffing categories:
-- Physician (Locum Tenens)
-- Nursing (Traveler RNs)
-- Allied Health (Diagnostics, Rehab, Therapists)
-
-Each has tailored inputs and output metrics aligned with how ROI is measured in each field.
-
-## How to Run
-```bash
-pip install -r requirements.txt
-streamlit run multi_streamlined_roi_app.py
-```
-
-Built by [Your Company Name Here] to modernize staffing analytics for hospitals and agencies alike.
+st.caption("Built with ❤️ by StaffOS | All calculations are for demonstration purposes only.")
