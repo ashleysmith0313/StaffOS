@@ -86,12 +86,22 @@ referral_revenue = cardio_income + gi_income + surgery_income + imaging_income
 
 # --- Locum Cost Inputs ---
 st.subheader("Locum Staffing Cost")
-locum_hrly = st.number_input("Locum Hourly Rate ($)", min_value=0, value=265)
-locum_hrs = st.number_input("Hours per Shift", min_value=1, max_value=24, value=10)
-locum_travel = st.number_input("Travel/Housing Cost per Day ($)", min_value=0, value=390)
-locum_cost_per = locum_hrly * locum_hrs + locum_travel
+
+locum_rate_type = st.radio("Select Locum Rate Type", ["Hourly", "Daily"])
+
+if locum_rate_type == "Hourly":
+    locum_hrly = st.number_input("Locum Hourly Rate ($)", min_value=0, value=265)
+    locum_hrs = st.number_input("Hours per Shift", min_value=1, max_value=24, value=10)
+    locum_travel = st.number_input("Travel/Housing Cost per Day ($)", min_value=0, value=390)
+    locum_cost_per = locum_hrly * locum_hrs + locum_travel
+else:
+    locum_daily = st.number_input("Locum Daily Rate ($)", min_value=0, value=3200)
+    locum_travel = st.number_input("Travel/Housing Cost per Day ($)", min_value=0, value=390)
+    locum_cost_per = locum_daily + locum_travel
+
 locum_total = locum_cost_per * locum_count if locum_toggle else 0
 annualized_locum_cost = locum_total * 365
+
 
 # --- Financial Calculations ---
 staffed_pct = occupancy_pct + (locum_coverage_pct if locum_toggle else 0)
