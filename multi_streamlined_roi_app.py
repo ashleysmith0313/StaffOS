@@ -1,73 +1,54 @@
-# multi_streamlined_roi_app.py
+CollaborationX Shark Tank: Technology Innovation Competition Application
 
-"""
-This Streamlit app models ROI for three healthcare staffing categories:
-1. Locum Tenens
-2. Travel Nursing
-3. Allied Health
-"""
+1. Business Name StaffOS
 
-import streamlit as st
+2. Year Founded 2025
 
-st.set_page_config(page_title="StaffOS ROI Platform", layout="wide")
-st.title("📊 StaffOS Unified ROI Calculator")
-st.markdown("**Smarter Staffing. All in One Place.**")
+3. Primary Contact Name Ashley Smith
 
-# Placeholder for service line selection and candidate mapping (future integration)
-st.markdown("### Coming Soon: RadiusOS Mapping + ShiftSync ROI")
+4. Primary Contact Email ebssolutionsllc@gmail.com
 
-st.header("🏥 ROI Calculator: Select Your Staffing Type")
+5. Primary Contact Phone 903-261-9841
 
-staffing_type = st.selectbox("Staffing Category", ["Locum Tenens", "Travel Nursing", "Allied Health"])
+6. Presenter Name(s) & Title(s) Ashley Smith, Founder & CEO
 
-# Shared Inputs
-st.subheader("🔧 Shift Setup")
-total_beds = st.number_input("Total Beds in Unit", min_value=1, value=18)
-occupancy_pct = st.slider("% of Beds Staffed Without Temp Staffing", 0, 100, 70)
+7. Business Website (full URL) https://staffos.com
 
-# Locum Logic
-if staffing_type == "Locum Tenens":
-    st.subheader("🧑‍⚕️ Locum Inputs")
-    hourly_rate = st.number_input("Hourly Rate ($)", value=265)
-    hours_per_shift = st.number_input("Hours per Shift", value=10)
-    travel_cost = st.number_input("Travel/Housing Cost per Day", value=390)
-    locums_per_shift = st.number_input("Locums per Shift", value=1)
-    utilization = st.slider("% Locum Utilization (Additional Coverage)", 0, 100, 80)
-    
-    revenue_per_bed = st.number_input("Revenue per Bed per Day ($)", value=8000)
-    cost_per_bed = st.number_input("Cost per Bed per Day ($)", value=4500)
-    referral_revenue = st.number_input("Referral Revenue per Bed ($)", value=700)
+8. Social Tags/URLs LinkedIn: https://www.linkedin.com/in/ashleysmith0313 [Other URLs if applicable]
 
-    staffed_beds = total_beds * (occupancy_pct + utilization) / 100
-    gross_revenue = staffed_beds * revenue_per_bed
-    gross_referral = staffed_beds * referral_revenue
-    operating_cost = staffed_beds * cost_per_bed
+9. Help us understand your business or product. What does it do and which problems does it solve? StaffOS is a unified healthcare staffing intelligence platform built for staffing firms and healthcare systems. It solves two fundamental problems: 1) It enables real-time ROI calculations for hospital executives evaluating locum tenens, nursing, and allied health staffing decisions, and 2) It offers an intuitive, ATS-integrated candidate mapping system that matches healthcare professionals to open roles based on proximity, credentialing, and facility-specific filters. StaffOS empowers both internal recruitment teams and client-facing teams with insights they’ve never had access to in one place.
 
-    total_locum_cost = (hourly_rate * hours_per_shift + travel_cost) * locums_per_shift
-    annual_locum_cost = total_locum_cost * 365
+10. What was the inspiration to founding the business and how does it differentiate from existing solutions? After spending over a decade in healthcare staffing—first in travel nursing recruitment during a startup’s rapid growth phase, and now in strategic account management for a leading locum tenens agency—I’ve lived every layer of the staffing lifecycle. I’ve seen how fragmented, outdated, and overly complicated tech stacks cause friction between staffing firms and their clients. Inspired by my father, a lifelong entrepreneur, -I’ve always looked for ways to elevate the room I’m in. StaffOS was born out of a desire to simplify complexity, giving frontline teams smarter tools to deliver faster, clearer value to -hospitals. Unlike existing clunky vendor tools or internal dashboards that don't speak to each other, StaffOS is purpose-built to be nimble, intuitive, and fully integratable with any ATS or VMS on the market.
 
-    net_margin = gross_revenue + gross_referral - operating_cost - total_locum_cost
-    annual_net_margin = net_margin * 365
+11. Who are the primary users/end clients of your product/service?
 
-    missed_beds = total_beds - staffed_beds
-    missed_revenue = missed_beds * (revenue_per_bed + referral_revenue - cost_per_bed)
-    annual_missed = missed_revenue * 365
+Healthcare staffing agencies (locums, travel nursing, allied)
 
-    st.subheader("💰 Results")
-    st.metric("Staffed Beds This Shift", int(staffed_beds))
-    st.metric("Net Margin (After Locum Cost)", f"${net_margin:,.0f}")
-    
-    if utilization > 0:
-        st.markdown(f"### 📈 **Annualized Impact with Locums**")
-        st.success(f"**Net ROI: ${annual_net_margin:,.0f}**\n\nLocum Cost: ${annual_locum_cost:,.0f}")
-    else:
-        st.markdown(f"### 📉 **Annualized Missed Opportunity Without Locums**")
-        st.markdown(f"<div style='background-color:#990000;color:white;padding:1rem;border-radius:8px;'>Annualized Net Loss: <strong>(${annual_missed:,.0f})</strong></div>", unsafe_allow_html=True)
+Vendor Management Systems companies
 
-# Add Travel Nursing and Allied logic later
-if staffing_type != "Locum Tenens":
-    st.info("Only Locum ROI is active. Other categories coming soon!")
+Internal business development teams
 
-# Footer
-st.markdown("---")
-st.caption("Built with ❤️ by StaffOS | All calculations are for demonstration purposes only.")
+Client services and delivery teams
+
+Hospital system decision-makers (CFOs, CMOs, CNOs)
+
+12. What stage is your company in? Shipping/beta/live
+
+13. What was your gross income from the business last year (2024)? $0 — pre-revenue; MVP finalized Q3 2025
+
+14. What are your projected revenues in 2025? $50,000–$100,000 based on 3–5 initial agency licenses
+
+15. How much outside capital have you raised in total? From whom? None. Fully self-funded.
+
+16. List any specific milestones reached, as well as any awards or accolades the business has received.
+
+Fully functioning ROI calculator app for locum tenens with real-time input capability
+
+Live proximity-based mapping tool (RadiusOS prototype)
+
+Beta version of the allied and nursing ROI calculator in progress
+
+Brand, domain, and roadmap finalized for StaffOS as a scalable SaaS
+
+17. Supplemental Attachments [Attach screenshots, deck, or demo video links here]
+
