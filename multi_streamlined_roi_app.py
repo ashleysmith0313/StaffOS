@@ -1,19 +1,17 @@
-
 # locum_shift_roi_calculator.py
 
 import streamlit as st
+import pandas as pd
+from PIL import Image
 
 st.set_page_config(page_title="Shift-Based Locum ROI Calculator", layout="centered")
-from PIL import Image
-import os
 
-# Load and display logo
-logo_path = os.path.join("assets", "staffos_logo.png")
-logo = Image.open(logo_path)
-st.image(logo, width=250)  # adjust width as needed
+# Display logo
+logo = Image.open("assets/staffos_logo.png")
+st.image(logo, width=200)
 
 st.title("🏥 Shift-Based Locum Coverage ROI Calculator")
-st.markdown("**Powered by VISTA**")
+st.markdown("**Powered by StaffOS**")
 
 # --- Select Role Type ---
 role = st.selectbox("Select Coverage Type", [
