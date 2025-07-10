@@ -4,6 +4,14 @@
 import streamlit as st
 
 st.set_page_config(page_title="Shift-Based Locum ROI Calculator", layout="centered")
+from PIL import Image
+import os
+
+# Load and display logo
+logo_path = os.path.join("assets", "staffos_logo.png")
+logo = Image.open(logo_path)
+st.image(logo, width=250)  # adjust width as needed
+
 st.title("🏥 Shift-Based Locum Coverage ROI Calculator")
 st.markdown("**Powered by VISTA**")
 
