@@ -1,45 +1,40 @@
-# locum_shift_roi_calculator.py
+
+# multi_streamlined_roi_app.py
 
 import streamlit as st
 import pandas as pd
-from PIL import Image
 
 st.set_page_config(page_title="Shift-Based Locum ROI Calculator", layout="centered")
-
-# Display logo
-logo = Image.open("assets/staffos_logo.png")
-st.image(logo, width=200)
-
 st.title("🏥 Shift-Based Locum Coverage ROI Calculator")
 st.markdown("**Powered by StaffOS**")
 
-# --- Select Role Type ---
-role = st.selectbox("Select Coverage Type", [
-    "Daytime Hospitalist (Med-Surg only)",
-    "Daytime Hospitalist (Med-Surg + ICU)",
-    "Nocturnist (Admits + Cross-Cover)"
-])
+# --- Check for uploaded hospital data ---
+hospital_data = st.session_state.get('hospital_data', None)
 
-# --- Default Logic ---
-if role == "Daytime Hospitalist (Med-Surg only)":
-    total_beds = 18
-    unit_rev = 2750
-    unit_cost = 1850
-    referrals_per_bed = 1.2
-elif role == "Daytime Hospitalist (Med-Surg + ICU)":
-    total_beds = 22
-    unit_rev = (2750 * 15 + 8000 * 7) / 22
-    unit_cost = (1850 * 15 + 4500 * 7) / 22
-    referrals_per_bed = (1.2 * 15 + 2.5 * 7) / 22
-elif role == "Nocturnist (Admits + Cross-Cover)":
-    total_beds = 12
-    unit_rev = 3000
-    unit_cost = 2000
-    referrals_per_bed = 0.8
+# --- Service Line Selection ---
+default_service_line = hospital_data['Service Line'] if hospital_data else 'Med-Surg'
+service_dict = {
+    'ICU (Medical/Surgical)': {'revenue_per_bed': 8000.0, 'cost_per_bed': 4500.0, 'revenue_per_referral': 700.0},
+    'ICU (Neuro/Trauma)': {'revenue_per_bed': 10000.0, 'cost_per_bed': 6000.0, 'revenue_per_referral': 750.0},
+    'Med-Surg': {'revenue_per_bed': 2750.0, 'cost_per_bed': 1800.0, 'revenue_per_referral': 900.0},
+    'Telemetry': {'revenue_per_bed': 3200.0, 'cost_per_bed': 2200.0, 'revenue_per_referral': 750.0},
+    'Step-Down Unit': {'revenue_per_bed': 3500.0, 'cost_per_bed': 2500.0, 'revenue_per_referral': 750.0},
+    'Rehab Unit': {'revenue_per_bed': 1500.0, 'cost_per_bed': 1000.0, 'revenue_per_referral': 583.33},
+    'Cardiology (Inpatient)': {'revenue_per_bed': 5000.0, 'cost_per_bed': 3000.0, 'revenue_per_referral': 750.0},
+    'Gastroenterology (Inpatient)': {'revenue_per_bed': 4200.0, 'cost_per_bed': 2800.0, 'revenue_per_referral': 1300.0},
+    'Pulmonology (Inpatient)': {'revenue_per_bed': 4600.0, 'cost_per_bed': 3000.0, 'revenue_per_referral': 850.0},
+    'Nephrology (Inpatient)': {'revenue_per_bed': 4000.0, 'cost_per_bed': 2600.0, 'revenue_per_referral': 850.0}
+}
+
+service_line = st.selectbox("Select Service Line", list(service_dict.keys()), index=list(service_dict.keys()).index(default_service_line))
+unit_rev = hospital_data['Revenue per Bed'] if hospital_data else service_dict[service_line]['revenue_per_bed']
+unit_cost = hospital_data['Cost per Bed'] if hospital_data else service_dict[service_line]['cost_per_bed']
+revenue_per_referral = hospital_data['Revenue per Referral'] if hospital_data else service_dict[service_line]['revenue_per_referral']
 
 # --- Editable Inputs ---
 st.header("🔧 Shift Details")
-total_beds = st.number_input("Total Beds in Unit", min_value=1, value=total_beds)
+default_beds = int(hospital_data['Total Beds']) if hospital_data else 18
+total_beds = st.number_input("Total Beds in Unit", min_value=1, value=default_beds)
 occupancy_pct = st.slider("Current Staffed Bed Percentage (%)", 0, 100, 75)
 locum_toggle = st.checkbox("Use Locums?")
 locum_count = st.number_input("Locums per Shift", min_value=0, value=1) if locum_toggle else 0
@@ -48,60 +43,32 @@ locum_coverage_pct = st.slider("Locum Utilization (%)", 0, 100, 80) if locum_tog
 unit_rev = st.number_input("Average Revenue per Bed/Admit ($)", min_value=0, value=int(unit_rev))
 unit_cost = st.number_input("Average Cost per Bed/Admit ($)", min_value=0, value=int(unit_cost))
 
-# --- Referral Revenue (Core) ---
-st.subheader("Referral Revenue (Downstream)")
-referrals_per_bed = st.number_input("Avg Referrals per Bed/Admission", min_value=0.0, value=referrals_per_bed)
-revenue_per_referral = st.number_input("Revenue per Referral ($)", min_value=0, value=900)
-
-# --- Referral Revenue by Type ---
-st.subheader("Referral Revenue Breakdown (Optional by Type)")
-ref_total = total_beds * referrals_per_bed * (occupancy_pct + (locum_coverage_pct if locum_toggle else 0)) / 100
-st.write(f"📌 Estimated Total Referrals This Shift: **{ref_total:.1f}**")
-
-st.markdown("Adjust the % distribution of referral types below. Total must equal 100%.")
-col1, col2 = st.columns(2)
-with col1:
-    cardio_pct = st.slider("Cardiology (%)", 0, 100, 30)
-    surgery_pct = st.slider("Surgery (%)", 0, 100, 25)
-with col2:
-    gi_pct = st.slider("GI (%)", 0, 100, 25)
-    imaging_pct = st.slider("Imaging/Diagnostics (%)", 0, 100, 20)
-
-total_pct = cardio_pct + gi_pct + surgery_pct + imaging_pct
-if total_pct != 100:
-    st.error("⚠️ Referral type percentages must total 100%. Adjust sliders.")
-    st.stop()
-
-cardio_rev = 500
-gi_rev = 1200
-surgery_rev = 3000
-imaging_rev = 800
-
-cardio_income = ref_total * (cardio_pct / 100) * cardio_rev
-gi_income = ref_total * (gi_pct / 100) * gi_rev
-surgery_income = ref_total * (surgery_pct / 100) * surgery_rev
-imaging_income = ref_total * (imaging_pct / 100) * imaging_rev
-
-referral_revenue = cardio_income + gi_income + surgery_income + imaging_income
+# --- Referral Revenue Toggle ---
+referral_toggle = st.checkbox("Include Referral Revenue?")
+referral_revenue = 0
+if referral_toggle:
+    st.subheader("Referral Revenue (Downstream)")
+    referrals_per_bed_default = hospital_data['Referrals per Bed'] if hospital_data else 1.2
+    referrals_per_bed = st.number_input("Avg Referrals per Bed/Admission", min_value=0.0, value=referrals_per_bed_default)
+    revenue_per_referral = st.number_input("Revenue per Referral ($)", min_value=0, value=int(revenue_per_referral))
+    ref_total = total_beds * referrals_per_bed * (occupancy_pct + (locum_coverage_pct if locum_toggle else 0)) / 100
+    referral_revenue = ref_total * revenue_per_referral
+else:
+    referrals_per_bed = 0
 
 # --- Locum Cost Inputs ---
 st.subheader("Locum Staffing Cost")
-
-locum_rate_type = st.radio("Select Locum Rate Type", ["Hourly", "Daily"])
-
-if locum_rate_type == "Hourly":
+rate_type = st.radio("Rate Type", ["Hourly", "Daily"])
+if rate_type == "Hourly":
     locum_hrly = st.number_input("Locum Hourly Rate ($)", min_value=0, value=265)
     locum_hrs = st.number_input("Hours per Shift", min_value=1, max_value=24, value=10)
-    locum_travel = st.number_input("Travel/Housing Cost per Day ($)", min_value=0, value=390)
-    locum_cost_per = locum_hrly * locum_hrs + locum_travel
+    locum_cost_per = locum_hrly * locum_hrs
 else:
-    locum_daily = st.number_input("Locum Daily Rate ($)", min_value=0, value=3200)
-    locum_travel = st.number_input("Travel/Housing Cost per Day ($)", min_value=0, value=390)
-    locum_cost_per = locum_daily + locum_travel
+    locum_cost_per = st.number_input("Locum Daily Rate ($)", min_value=0, value=2500)
 
-locum_total = locum_cost_per * locum_count if locum_toggle else 0
-annualized_locum_cost = locum_total * 365
-
+locum_travel = st.number_input("Travel/Housing Cost per Day ($)", min_value=0, value=390)
+locum_cost_total = (locum_cost_per + locum_travel) * locum_count if locum_toggle else 0
+annualized_locum_cost = locum_cost_total * 365
 
 # --- Financial Calculations ---
 staffed_pct = occupancy_pct + (locum_coverage_pct if locum_toggle else 0)
@@ -109,30 +76,33 @@ beds_covered = int(total_beds * (staffed_pct / 100))
 gross_rev = beds_covered * unit_rev
 operating_cost = beds_covered * unit_cost
 net_before_locum = gross_rev + referral_revenue - operating_cost
-net_after_locum = net_before_locum - locum_total
+net_after_locum = net_before_locum - locum_cost_total
 annualized_net = net_after_locum * 365
 annualized_missed = (total_beds * (1 - staffed_pct / 100)) * (unit_rev + referrals_per_bed * revenue_per_referral - unit_cost) * 365
 
 # --- Output Summary ---
 st.header("📊 Shift Financial Summary")
 st.metric("Beds Staffed This Shift", beds_covered)
-st.metric("Unstaffed Beds (Missed Opportunity)", total_beds - beds_covered)
-st.metric("Gross Revenue from Staffed Beds", f"${gross_rev:,.0f}")
-st.metric("Operating Cost for Staffed Beds", f"${operating_cost:,.0f}")
-st.metric("Referral Revenue Generated", f"${referral_revenue:,.0f}")
-st.metric("Net Margin Before Locum Cost", f"${net_before_locum:,.0f}")
-st.metric("Locum Total Cost for Shift", f"${locum_total:,.0f}")
-st.metric("🔥 Net Financial Impact (After Locum)", f"${net_after_locum:,.0f}")
+st.metric("Unstaffed Beds", total_beds - beds_covered)
+st.metric("Gross Revenue", f"${gross_rev:,.0f}")
+st.metric("Operating Cost", f"${operating_cost:,.0f}")
+st.metric("Referral Revenue", f"${referral_revenue:,.0f}")
+st.metric("Net Before Locum", f"${net_before_locum:,.0f}")
+st.metric("Locum Total Cost", f"${locum_cost_total:,.0f}")
+st.metric("🔥 Net After Locum", f"${net_after_locum:,.0f}")
 
 if locum_toggle:
-    st.markdown(f"### 🧮 Estimated Annual Impact (365 Days)")
-    st.markdown(f"<div style='background-color:#d4f4dd;padding:1rem;border-radius:8px;'><strong>Annualized Net ROI (With Locum): ${annualized_net:,.0f}</strong><br><em>Annualized Locum Cost: ${annualized_locum_cost:,.0f}</em></div>", unsafe_allow_html=True)
+    st.markdown("""
+    ### 🧮 **Annual Impact**
+    <div style='background-color:#d4f4dd;padding:1rem;border-radius:8px;'>
+    <strong>Annualized ROI (With Locum): ${annualized_net:,.0f}</strong><br>
+    <em>Annualized Locum Cost: ${annualized_locum_cost:,.0f}</em>
+    </div>
+    """, unsafe_allow_html=True)
 else:
-    st.markdown(f"### 🧮 Estimated Annual Missed Opportunity (365 Days)")
-    st.markdown(f"<div style='background-color:#990000;padding:1rem;border-radius:8px;color:white;'><strong>Annualized Net Loss: (${annualized_missed:,.0f})</strong></div>", unsafe_allow_html=True)
-
-if locum_toggle:
-    if net_after_locum >= 0:
-        st.success("Positive ROI from locum coverage, including referral revenue.")
-    else:
-        st.warning("Locum coverage reduces net margin, but protects top-line and referral throughput.")
+    st.markdown("""
+    ### 🧮 **Annual Missed Opportunity**
+    <div style='background-color:#800000;padding:1rem;border-radius:8px;color:white;'>
+    <strong>Annualized Net Loss: (${annualized_missed:,.0f})</strong>
+    </div>
+    """, unsafe_allow_html=True)
