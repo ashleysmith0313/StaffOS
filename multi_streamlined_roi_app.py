@@ -1,4 +1,3 @@
-
 # multi_streamlined_roi_app.py
 
 import streamlit as st
@@ -6,15 +5,10 @@ import pandas as pd
 
 st.set_page_config(page_title="StaffOS ROI Calculator", layout="wide")
 
-# Centered and resized logo
-st.markdown(
-    """
-    <div style='text-align: center;'>
-        <img src='https://staffos.streamlit.app/assets/staffos_logo.png' alt='staffos_logo.png' width='300'/>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# Centered and resized logo from assets folder
+col1, col2, col3 = st.columns([1, 2, 1])
+with col2:
+    st.image("assets/staffos_logo.png", width=300)
 
 st.title("🏥 Shift-Based Locum Coverage ROI Calculator")
 st.markdown("**Powered by StaffOS**")
@@ -150,4 +144,4 @@ if locum_toggle:
     if net_after_locum >= 0:
         st.success("✅ Positive ROI from locum coverage, including referral revenue.")
     else:
-        st.warning("⚠️ Locum coverage reduces net margin, but protects top-line and referral throughput.")
+        st.warning("⚠️ Locum coverage reduces net margin, but protects t
