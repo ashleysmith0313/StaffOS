@@ -144,4 +144,4 @@ if locum_toggle:
     if net_after_locum >= 0:
         st.success("✅ Positive ROI from locum coverage, including referral revenue.")
     else:
-        st.warning("⚠️ Locum coverage reduces net margin, but protects t
+        st.warning("⚠️ Locum coverage reduces net margin, but protects top-line and referral throughput.")
