@@ -1,4 +1,4 @@
-{ "id": 1, "name": "Dr. John Smith", "type": "Hospitalist" },
+  { "id": 1, "name": "Dr. John Smith", "type": "Hospitalist" },
   { "id": 2, "name": "Sarah Brown", "type": "CRNA" },
   { "id": 3, "name": "Michael Johnson", "type": "Primary Care" },
   { "id": 4, "name": "Dr. Emily Davis", "type": "Cardiology" },
