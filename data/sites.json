@@ -1,0 +1,8 @@
+{ "id": 1, "name": "Honolulu General Hospital" },
+  { "id": 2, "name": "Maui Medical Center" },
+  { "id": 3, "name": "Kauai Regional Hospital" },
+  { "id": 4, "name": "Hilo Community Medical" },
+  { "id": 5, "name": "Waikiki Surgical Center" },
+  { "id": 6, "name": "Pearl Harbor Naval Hospital" },
+  { "id": 7, "name": "Molokai Critical Access Hospital" },
+  { "id": 8, "name": "Big Island Trauma Center" }
