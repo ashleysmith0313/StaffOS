@@ -380,6 +380,10 @@ with tab_calendar:
             "initialDate": first_day.isoformat(),
             "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay,listWeek"},
             "height": 720,
+            "selectable": True,
+            "navLinks": True,
+            "eventStartEditable": False,
+            "eventDurationEditable": False,
         }
         with st.container():
             cal_state = st_calendar(events=events, options=cal_options, key="main_calendar")
@@ -473,6 +477,104 @@ with tab_calendar:
                     st.rerun()
             else:
                 st.info("Tip: click a calendar event to edit it. If clicking doesn't open a form, use the selector below.")
+            # Always-on selector for editing (shows even if you can click events)
+            st.markdown("### Edit events in this month")
+            if events:
+                options = []
+                for e in events:
+                    s_val = pd.to_datetime(e["start"]).strftime("%Y-%m-%d %H:%M")
+                    e_val = pd.to_datetime(e["end"]).strftime("%Y-%m-%d %H:%M")
+                    title = e.get("title","")
+                    label = f"{s_val} → {e_val} | {title} [{e['extendedProps']['shift_id']}]"
+                    options.append((label, e["extendedProps"]["shift_id"]))
+                labels = [o[0] for o in options]
+                ids = {o[0]: o[1] for o in options}
+
+                selected_label = st.selectbox("Pick a shift to edit", options=labels, key="month_editor_select")
+                selected_id = ids[selected_label]
+
+                with engine.begin() as conn:
+                    row = conn.execute(select(shifts).where(shifts.c.shift_id == selected_id)).mappings().first()
+
+                if row:
+                    with st.form(f"edit_shift_calendar_always_{selected_id}"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            prov_options = df_prov["provider_name"].tolist() if not df_prov.empty else ["(none)"]
+                            prov_index = 0
+                            if not df_prov.empty and (df_prov["provider_id"] == row["provider_id"]).any():
+                                prov_index = int(df_prov.index[df_prov["provider_id"]==row["provider_id"]][0])
+                            prov_name_edit = st.selectbox("Provider", options=prov_options, index=min(prov_index, max(len(prov_options)-1,0)))
+                        with c2:
+                            cli_options = df_cli["client_name"].tolist() if not df_cli.empty else ["(none)"]
+                            cli_index = 0
+                            if not df_cli.empty and (df_cli["client_id"] == row["client_id"]).any():
+                                cli_index = int(df_cli.index[df_cli["client_id"]==row["client_id"]][0])
+                            cli_name_edit = st.selectbox("Client", options=cli_options, index=min(cli_index, max(len(cli_options)-1,0)))
+
+                        start_val2 = pd.to_datetime(row["start_datetime"]).to_pydatetime()
+                        end_val2 = pd.to_datetime(row["end_datetime"]).to_pydatetime()
+
+                        c3, c4 = st.columns(2)
+                        with c3:
+                            start_date_edit = st.date_input("Start Date", value=start_val2.date(), key=f"se_{selected_id}_sd")
+                            start_time_edit = st.time_input("Start Time", value=start_val2.time(), key=f"se_{selected_id}_st")
+                        with c4:
+                            is_24h_edit = st.checkbox("24-hour call shift", value=(end_val2 - start_val2).total_seconds() == 24*3600, key=f"se_{selected_id}_24")
+                            end_date_edit = st.date_input("End Date", value=end_val2.date(), disabled=is_24h_edit, key=f"se_{selected_id}_ed")
+                            end_time_edit = st.time_input("End Time", value=end_val2.time(), disabled=is_24h_edit, key=f"se_{selected_id}_et")
+
+                        shift_type_edit = st.text_input("Shift Type", value=row.get("shift_type") or "Day", key=f"se_{selected_id}_type")
+                        notes_edit = st.text_input("Notes", value=row.get("notes") or "", key=f"se_{selected_id}_notes")
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            save = st.form_submit_button("Save changes")
+                        with col2:
+                            dup = st.form_submit_button("Duplicate")
+                        with col3:
+                            delete = st.form_submit_button("Delete")
+
+                    if delete:
+                        with engine.begin() as conn:
+                            delete_by_id(conn, shifts, "shift_id", selected_id)
+                        st.success("Deleted shift.")
+                        st.rerun()
+
+                    if save or dup:
+                        new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0] if prov_name_edit in (df_prov["provider_name"].tolist() if not df_prov.empty else []) else row["provider_id"]
+                        new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0] if cli_name_edit in (df_cli["client_name"].tolist() if not df_cli.empty else []) else row["client_id"]
+                        start_dt_new = datetime.combine(start_date_edit, start_time_edit)
+                        if is_24h_edit:
+                            end_dt_new = start_dt_new + timedelta(hours=24)
+                        else:
+                            end_dt_new = datetime.combine(end_date_edit, end_time_edit)
+
+                        new_row = {
+                            "shift_id": selected_id if save else generate_id("S"),
+                            "provider_id": new_prov_id,
+                            "client_id": new_cli_id,
+                            "start_datetime": start_dt_new,
+                            "end_datetime": end_dt_new,
+                            "shift_type": shift_type_edit,
+                            "notes": notes_edit,
+                        }
+                        with engine.begin() as conn:
+                            upsert(conn, shifts, new_row, key="shift_id")
+                        st.success("Saved." if save else "Duplicated.")
+                        st.rerun()
+
+            # Edit events on a specific date
+            st.markdown("### Edit events on date")
+            day_pick = st.date_input("Choose a date", value=first_day, key="calendar_day_picker")
+            day_events = [e for e in events if pd.to_datetime(e["start"]).date() == pd.to_datetime(day_pick).date()]
+            if day_events:
+                st.write(f"{len(day_events)} event(s) on {day_pick}:")
+                for e in day_events:
+                    st.write("•", e["title"])
+            else:
+                st.write("No events on this date.")
+
                 if events:
                     options = []
                     for e in events:
