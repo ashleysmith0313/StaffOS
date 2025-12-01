@@ -21,7 +21,7 @@ except Exception:
 # ----------------------
 # Configuration & Paths
 # ----------------------
-APP_TITLE = "Provider Scheduling"
+APP_TITLE = "StaffOS - VISTA Provider Scheduling"
 DB_PATH = os.path.join("data", "scheduling.db")
 EXPORTS_DIR = "exports"
 IMPORTS_DIR = "imports"
