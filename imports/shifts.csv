@@ -1,0 +1,2 @@
+shift_id,provider_id,client_id,start_datetime,end_datetime,shift_type,notes
+S001,P001,C001,2025-01-10 08:00,2025-01-10 16:00,Day,
