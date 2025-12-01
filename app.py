@@ -371,23 +371,23 @@ with tab_calendar:
         }
         with st.container():
             cal_state = st_calendar(events=events, options=cal_options, key="main_calendar")
-            
-    st.markdown("**Legend**")
-    lc1, lc2, lc3, lc4 = st.columns(4)
-    with lc1:
-        st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DEFAULT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Other</div>', unsafe_allow_html=True)
-    with lc2:
-        st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DAY};display:inline-block;margin-right:8px;border-radius:3px;"></span>Day', unsafe_allow_html=True)
-    with lc3:
-        st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_NIGHT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Night', unsafe_allow_html=True)
-    with lc4:
-        st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_CALL24};display:inline-block;margin-right:8px;border-radius:3px;"></span>24h Call', unsafe_allow_html=True)
+            # Legend
+            st.markdown("**Legend**")
+            lc1, lc2, lc3, lc4 = st.columns(4)
+            with lc1:
+                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DEFAULT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Other</div>', unsafe_allow_html=True)
+            with lc2:
+                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DAY};display:inline-block;margin-right:8px;border-radius:3px;"></span>Day</div>', unsafe_allow_html=True)
+            with lc3:
+                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_NIGHT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Night</div>', unsafe_allow_html=True)
+            with lc4:
+                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_CALL24};display:inline-block;margin-right:8px;border-radius:3px;"></span>24h Call</div>', unsafe_allow_html=True)
 
             if cal_state and cal_state.get("clickedEvent"):
                 ev = cal_state["clickedEvent"]
                 st.info(f"Selected: {ev['title']}")
 
-                # Load existing values
+                # Load values
                 sid = ev["extendedProps"]["shift_id"]
                 prov_id = ev["extendedProps"]["provider_id"]
                 cli_id = ev["extendedProps"]["client_id"]
@@ -399,11 +399,15 @@ with tab_calendar:
                     c1, c2 = st.columns(2)
                     with c1:
                         prov_options = df_prov["provider_name"].tolist() if not df_prov.empty else ["(none)"]
-                        prov_index = safe_select_index(df_prov["provider_id"] if not df_prov.empty else pd.Series([]), lambda x: x==prov_id, default=0)
+                        prov_index = 0
+                        if not df_prov.empty and (df_prov["provider_id"] == prov_id).any():
+                            prov_index = int(df_prov.index[df_prov["provider_id"]==prov_id][0])
                         prov_name_edit = st.selectbox("Provider", options=prov_options, index=min(prov_index, max(len(prov_options)-1,0)))
                     with c2:
                         cli_options = df_cli["client_name"].tolist() if not df_cli.empty else ["(none)"]
-                        cli_index = safe_select_index(df_cli["client_id"] if not df_cli.empty else pd.Series([]), lambda x: x==cli_id, default=0)
+                        cli_index = 0
+                        if not df_cli.empty and (df_cli["client_id"] == cli_id).any():
+                            cli_index = int(df_cli.index[df_cli["client_id"]==cli_id][0])
                         cli_name_edit = st.selectbox("Client", options=cli_options, index=min(cli_index, max(len(cli_options)-1,0)))
                     c3, c4 = st.columns(2)
                     with c3:
@@ -435,8 +439,8 @@ with tab_calendar:
                     st.rerun()
 
                 if save or dup:
-                    new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0]
-                    new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0]
+                    new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0] if prov_name_edit in (df_prov["provider_name"].tolist() if not df_prov.empty else []) else prov_id
+                    new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0] if cli_name_edit in (df_cli["client_name"].tolist() if not df_cli.empty else []) else cli_id
                     start_dt_new = datetime.combine(start_date_edit, start_time_edit)
                     if is_24h_edit:
                         end_dt_new = start_dt_new + timedelta(hours=24)
@@ -458,7 +462,6 @@ with tab_calendar:
                     st.rerun()
             else:
                 st.info("Tip: click a calendar event to edit it. If clicking doesn't open a form, use the selector below.")
-                # Fallback inline editor for Calendar tab
                 if events:
                     options = []
                     for e in events:
@@ -473,7 +476,6 @@ with tab_calendar:
                     selected_label = st.selectbox("Select a shift to edit (Calendar tab)", options=labels)
                     selected_id = ids[selected_label]
 
-                    # Load row
                     with engine.begin() as conn:
                         row = conn.execute(select(shifts).where(shifts.c.shift_id == selected_id)).mappings().first()
 
@@ -481,23 +483,29 @@ with tab_calendar:
                         with st.form(f"edit_shift_calendar_fallback_{selected_id}"):
                             c1, c2 = st.columns(2)
                             with c1:
-                                prov_name_edit = st.selectbox("Provider", options=df_prov["provider_name"].tolist(),
-                                                              index=int(df_prov.index[df_prov["provider_id"]==row["provider_id"]][0]))
+                                prov_options = df_prov["provider_name"].tolist() if not df_prov.empty else ["(none)"]
+                                prov_index = 0
+                                if not df_prov.empty and (df_prov["provider_id"] == row["provider_id"]).any():
+                                    prov_index = int(df_prov.index[df_prov["provider_id"]==row["provider_id"]][0])
+                                prov_name_edit = st.selectbox("Provider", options=prov_options, index=min(prov_index, max(len(prov_options)-1,0)))
                             with c2:
-                                cli_name_edit = st.selectbox("Client", options=df_cli["client_name"].tolist(),
-                                                             index=int(df_cli.index[df_cli["client_id"]==row["client_id"]][0]))
+                                cli_options = df_cli["client_name"].tolist() if not df_cli.empty else ["(none)"]
+                                cli_index = 0
+                                if not df_cli.empty and (df_cli["client_id"] == row["client_id"]).any():
+                                    cli_index = int(df_cli.index[df_cli["client_id"]==row["client_id"]][0])
+                                cli_name_edit = st.selectbox("Client", options=cli_options, index=min(cli_index, max(len(cli_options)-1,0)))
 
-                            start_val = pd.to_datetime(row["start_datetime"]).to_pydatetime()
-                            end_val = pd.to_datetime(row["end_datetime"]).to_pydatetime()
+                            start_val2 = pd.to_datetime(row["start_datetime"]).to_pydatetime()
+                            end_val2 = pd.to_datetime(row["end_datetime"]).to_pydatetime()
 
                             c3, c4 = st.columns(2)
                             with c3:
-                                start_date_edit = st.date_input("Start Date", value=start_val.date())
-                                start_time_edit = st.time_input("Start Time", value=start_val.time())
+                                start_date_edit = st.date_input("Start Date", value=start_val2.date())
+                                start_time_edit = st.time_input("Start Time", value=start_val2.time())
                             with c4:
-                                is_24h_edit = st.checkbox("24-hour call shift", value=(end_val - start_val).total_seconds() == 24*3600)
-                                end_date_edit = st.date_input("End Date", value=end_val.date(), disabled=is_24h_edit)
-                                end_time_edit = st.time_input("End Time", value=end_val.time(), disabled=is_24h_edit)
+                                is_24h_edit = st.checkbox("24-hour call shift", value=(end_val2 - start_val2).total_seconds() == 24*3600)
+                                end_date_edit = st.date_input("End Date", value=end_val2.date(), disabled=is_24h_edit)
+                                end_time_edit = st.time_input("End Time", value=end_val2.time(), disabled=is_24h_edit)
 
                             shift_type_edit = st.text_input("Shift Type", value=row.get("shift_type") or "Day")
                             notes_edit = st.text_input("Notes", value=row.get("notes") or "")
@@ -517,8 +525,8 @@ with tab_calendar:
                             st.rerun()
 
                         if save or dup:
-                            new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0]
-                            new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0]
+                            new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0] if prov_name_edit in (df_prov["provider_name"].tolist() if not df_prov.empty else []) else row["provider_id"]
+                            new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0] if cli_name_edit in (df_cli["client_name"].tolist() if not df_cli.empty else []) else row["client_id"]
                             start_dt_new = datetime.combine(start_date_edit, start_time_edit)
                             if is_24h_edit:
                                 end_dt_new = start_dt_new + timedelta(hours=24)
@@ -538,41 +546,17 @@ with tab_calendar:
                                 upsert(conn, shifts, new_row, key="shift_id")
                             st.success("Saved." if save else "Duplicated.")
                             st.rerun()
-
-                if save or dup:
-                    new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0]
-                    new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0]
-                    start_dt_new = datetime.combine(start_date_edit, start_time_edit)
-                    if is_24h_edit:
-                        end_dt_new = start_dt_new + timedelta(hours=24)
-                    else:
-                        end_dt_new = datetime.combine(end_date_edit, end_time_edit)
-
-                    row = {
-                        "shift_id": sid if save else generate_id("S"),
-                        "provider_id": new_prov_id,
-                        "client_id": new_cli_id,
-                        "start_datetime": start_dt_new,
-                        "end_datetime": end_dt_new,
-                        "shift_type": shift_type_edit,
-                        "notes": notes_edit,
-                    }
-                    with engine.begin() as conn:
-                        upsert(conn, shifts, row, key="shift_id")
-                    st.success("Saved." if save else "Duplicated.")
-                    st.rerun()
     else:
         st.warning("Calendar component not available — showing simple month table.")
         days = pd.date_range(first_day, last_day, freq="D")
         table = pd.DataFrame(index=[d.date() for d in days], columns=["Shifts"]).fillna("")
         for _, r in df_shifts.iterrows():
             d = pd.to_datetime(r["start_datetime"]).date()
-            prov_name = df_prov.loc[df_prov["provider_id"] == r["provider_id"], "provider_name"].iloc[0]
-            cli_name = df_cli.loc[df_cli["client_id"] == r["client_id"], "client_name"].iloc[0]
+            prov_name = df_prov.loc[df_prov["provider_id"] == r["provider_id"], "provider_name"].iloc[0] if not df_prov.empty else "Unknown"
+            cli_name = df_cli.loc[df_cli["client_id"] == r["client_id"], "client_name"].iloc[0] if not df_cli.empty else "Unknown"
             table.at[d, "Shifts"] += f"• {prov_name} @ {cli_name} ({r.get('shift_type','')})\n"
         st.dataframe(table, use_container_width=True, height=600)
-
-    st.markdown("---")
+st.markdown("---")
     st.subheader("Export")
     colx, coly, colz = st.columns(3)
     with colx:
