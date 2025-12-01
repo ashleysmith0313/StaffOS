@@ -1,18 +1,14 @@
 from __future__ import annotations
 import os
 import io
-import json
 from datetime import datetime, date, time, timedelta
 from dateutil.relativedelta import relativedelta
 
 import pandas as pd
-from pydantic import BaseModel, Field
 from sqlalchemy import (
     create_engine, MetaData, Table, Column, Integer, String, DateTime, Time, ForeignKey
 )
-from sqlalchemy.sql import select, and_, func
-from sqlalchemy.exc import OperationalError
-
+from sqlalchemy.sql import select, and_
 import streamlit as st
 
 # Attempt to import the calendar component
@@ -46,7 +42,7 @@ providers = Table(
     Column("specialty", String, nullable=True),
     Column("preferred_shift_start", Time, nullable=True),
     Column("preferred_shift_end", Time, nullable=True),
-    Column("preferred_days", String, nullable=True),  # e.g. "Mon,Tue,Wed"
+    Column("preferred_days", String, nullable=True),
 )
 
 clients = Table(
@@ -86,46 +82,35 @@ def parse_time(t: str | time | None) -> time | None:
         return None
     if isinstance(t, time):
         return t
-    try:
-        return datetime.strptime(t.strip(), "%H:%M").time()
-    except Exception:
+    for fmt in ("%H:%M", "%I:%M %p"):
         try:
-            return datetime.strptime(t.strip(), "%I:%M %p").time()
+            return datetime.strptime(t.strip(), fmt).time()
         except Exception:
-            return None
-
+            pass
+    return None
 
 def month_range(year: int, month: int) -> tuple[date, date]:
     first = date(year, month, 1)
     last = first + relativedelta(months=1) - timedelta(days=1)
     return first, last
 
-
 def df_from_table(conn, table: Table) -> pd.DataFrame:
     rows = conn.execute(select(table)).mappings().all()
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=[c.name for c in table.columns])
 
-
 def upsert(conn, table: Table, row: dict, key: str):
-    # Simple upsert for SQLite
     existing = conn.execute(select(table).where(table.c[key] == row[key])).mappings().first()
     if existing:
         conn.execute(table.update().where(table.c[key] == row[key]).values(**row))
     else:
         conn.execute(table.insert().values(**row))
 
-
 def delete_by_id(conn, table: Table, key: str, value: str):
     conn.execute(table.delete().where(getattr(table.c, key) == value))
-
 
 def generate_id(prefix: str) -> str:
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
     return f"{prefix}_{ts}"
-
-
-def human_dt(dt: datetime) -> str:
-    return dt.strftime("%Y-%m-%d %H:%M")
 
 # ----------------------
 # Exporters
@@ -150,7 +135,7 @@ def export_qgenda_csv(conn, start_dt: datetime, end_dt: datetime) -> str:
         .where(and_(shifts.c.start_datetime >= start_dt, shifts.c.end_datetime <= end_dt))
         .order_by(shifts.c.start_datetime)
     )
-    df = pd.DataFrame(conn.execute(q).mappings().all())
+    df = pd.DataFrame(engine.begin().execute(q).mappings().all())
     if df.empty:
         df = pd.DataFrame(columns=[
             "ProviderID","ProviderName","ClientID","ClientName","Location",
@@ -167,19 +152,15 @@ def export_qgenda_csv(conn, start_dt: datetime, end_dt: datetime) -> str:
             "end_datetime": "EndDateTime",
             "shift_type": "ShiftType",
             "notes": "Notes",
-        })[
-            [
-                "ProviderID","ProviderName","ClientID","ClientName","Location",
-                "StartDateTime","EndDateTime","ShiftType","Notes"
-            ]
-        ]
+        })[[
+            "ProviderID","ProviderName","ClientID","ClientName","Location",
+            "StartDateTime","EndDateTime","ShiftType","Notes"
+        ]]
     out_path = os.path.join(EXPORTS_DIR, f"qgenda_export_{start_dt.date()}_to_{end_dt.date()}.csv")
     df.to_csv(out_path, index=False)
     return out_path
 
-
 def export_table_template(name: str) -> bytes:
-    import io
     templates = {
         "providers": pd.DataFrame([
             {
@@ -214,18 +195,22 @@ def export_table_template(name: str) -> bytes:
     return buf.getvalue().encode()
 
 # ----------------------
-# UI Building Blocks
+# UI
 # ----------------------
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
-st.caption("Fast, friendly monthly scheduling for providers and clients. Import/Export CSV, QGenda-friendly export, and a real-time calendar view.")
+st.caption("Monthly scheduling with real-time calendar, CSV import/export, and QGenda-friendly export.")
 
 # Session defaults
 if "selected_year" not in st.session_state:
     today = date.today()
     st.session_state.selected_year = today.year
     st.session_state.selected_month = today.month
+if "prov_filter" not in st.session_state:
+    st.session_state.prov_filter = "(All)"
+if "cli_filter" not in st.session_state:
+    st.session_state.cli_filter = "(All)"
 
 with engine.begin() as conn:
     df_prov = df_from_table(conn, providers)
@@ -233,7 +218,7 @@ with engine.begin() as conn:
     df_creds = df_from_table(conn, credentials)
     df_shifts = df_from_table(conn, shifts)
 
-# Filters & Month Picker
+# Sidebar filters
 with st.sidebar:
     st.subheader("Filters & Month")
     col_a, col_b = st.columns(2)
@@ -245,12 +230,23 @@ with st.sidebar:
     st.session_state.selected_month = month
 
     prov_filter = st.selectbox(
-        "Filter by Provider", options=["(All)"] + sorted(df_prov["provider_name"].tolist())
+        "Filter by Provider", options=["(All)"] + (sorted(df_prov["provider_name"].tolist()) if not df_prov.empty else []), key="prov_filter"
     ) if not df_prov.empty else "(All)"
-
     cli_filter = st.selectbox(
-        "Filter by Client", options=["(All)"] + sorted(df_cli["client_name"].tolist())
+        "Filter by Client", options=["(All)"] + (sorted(df_cli["client_name"].tolist()) if not df_cli.empty else []), key="cli_filter"
     ) if not df_cli.empty else "(All)"
+
+    if st.button("Clear all filters (jump to current month)"):
+        today = date.today()
+        st.session_state.selected_year = today.year
+        st.session_state.selected_month = today.month
+        st.session_state.prov_filter = "(All)"
+        st.session_state.cli_filter = "(All)"
+        st.rerun()
+    if st.button("Clear provider/client filters only"):
+        st.session_state.prov_filter = "(All)"
+        st.session_state.cli_filter = "(All)"
+        st.rerun()
 
     st.markdown("---")
     st.subheader("Quick Add Shift")
@@ -267,15 +263,16 @@ with st.sidebar:
 
         shift_date = st.date_input("Date", value=date.today())
         start_t = st.time_input("Start", value=time(8, 0))
-        end_t = st.time_input("End", value=time(16, 0))
-        shift_type = st.text_input("Shift Type", value="Day")
+        is_24h = st.checkbox("24-hour call shift", value=False, help="Ends 24 hours after start (next day).")
+        end_t = st.time_input("End", value=time(16, 0), disabled=is_24h)
+        shift_type = st.text_input("Shift Type", value="Call (24h)" if is_24h else "Day")
         notes = st.text_input("Notes", value="")
         submitted = st.form_submit_button("Add Shift")
         if submitted and provider_id and client_id:
             with engine.begin() as conn:
                 sid = generate_id("S")
                 start_dt = datetime.combine(shift_date, start_t)
-                end_dt = datetime.combine(shift_date, end_t)
+                end_dt = start_dt + timedelta(hours=24) if is_24h else datetime.combine(shift_date, end_t)
                 upsert(conn, shifts, {
                     "shift_id": sid,
                     "provider_id": provider_id,
@@ -288,7 +285,7 @@ with st.sidebar:
             st.success("Shift added.")
             st.rerun()
 
-# Re-load after potential write
+# Reload after writes
 with engine.begin() as conn:
     df_prov = df_from_table(conn, providers)
     df_cli = df_from_table(conn, clients)
@@ -297,7 +294,7 @@ with engine.begin() as conn:
 
 first_day, last_day = month_range(st.session_state.selected_year, st.session_state.selected_month)
 
-# Apply filters to shifts
+# Filter shifts for month and by filters
 if not df_shifts.empty:
     df_shifts = df_shifts[(df_shifts["start_datetime"] >= pd.Timestamp(first_day)) & (df_shifts["end_datetime"] <= pd.Timestamp(last_day) + pd.Timedelta(days=1))]
 if prov_filter != "(All)" and not df_prov.empty:
@@ -307,27 +304,24 @@ if cli_filter != "(All)" and not df_cli.empty:
     cid = df_cli.loc[df_cli["client_name"] == cli_filter, "client_id"].iloc[0]
     df_shifts = df_shifts[df_shifts["client_id"] == cid]
 
-# ---------------
-# Tabs Navigation
-# ---------------
-
-tab_calendar, tab_providers, tab_clients, tab_credentials, tab_io, tab_settings = st.tabs([
-    "📅 Calendar", "👩‍⚕️ Providers", "🏥 Clients", "🔐 Credentials", "⬆️⬇️ Upload/Download", "⚙️ Settings"
+# Tabs
+tab_calendar, tab_shifts_table, tab_providers, tab_clients, tab_credentials, tab_io, tab_settings = st.tabs([
+    "📅 Calendar", "📋 Shifts (Table)", "👩‍⚕️ Providers", "🏥 Clients", "🔐 Credentials", "⬆️⬇️ Upload/Download", "⚙️ Settings"
 ])
 
-# ---------
 # Calendar
-# ---------
 with tab_calendar:
     st.subheader(f"Monthly View — {first_day.strftime('%B %Y')}")
+    with st.expander("Debug: Show raw shifts for this month"):
+        st.dataframe(df_shifts, use_container_width=True, hide_index=True)
 
-    # Build FullCalendar events
+    # Build events
     events = []
-    if not df_shifts.empty:
+    if not df_shifts.empty and not df_prov.empty and not df_cli.empty:
         for _, r in df_shifts.iterrows():
             prov_name = df_prov.loc[df_prov["provider_id"] == r["provider_id"], "provider_name"].iloc[0]
             cli_name = df_cli.loc[df_cli["client_id"] == r["client_id"], "client_name"].iloc[0]
-            title = f"{prov_name} @ {cli_name} ({r['shift_type']})"
+            title = f"{prov_name} @ {cli_name} ({r['shift_type']})" if r.get("shift_type") else f"{prov_name} @ {cli_name}"
             events.append({
                 "title": title,
                 "start": pd.to_datetime(r["start_datetime"]).isoformat(),
@@ -344,11 +338,7 @@ with tab_calendar:
         cal_options = {
             "initialView": "dayGridMonth",
             "initialDate": first_day.isoformat(),
-            "headerToolbar": {
-                "left": "prev,next today",
-                "center": "title",
-                "right": "dayGridMonth,timeGridWeek,timeGridDay,listWeek"
-            },
+            "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay,listWeek"},
             "height": 720,
         }
         with st.container():
@@ -356,26 +346,84 @@ with tab_calendar:
             if cal_state and cal_state.get("clickedEvent"):
                 ev = cal_state["clickedEvent"]
                 st.info(f"Selected: {ev['title']}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("Delete Shift", use_container_width=True):
-                        with engine.begin() as conn:
-                            delete_by_id(conn, shifts, "shift_id", ev["extendedProps"]["shift_id"])
-                        st.success("Deleted.")
-                        st.rerun()
-                with col2:
-                    st.write("(Edit flow can be added similarly — to keep MVP simple.)")
+
+                # Load existing values
+                sid = ev["extendedProps"]["shift_id"]
+                prov_id = ev["extendedProps"]["provider_id"]
+                cli_id = ev["extendedProps"]["client_id"]
+                notes_val = ev["extendedProps"].get("notes", "")
+                start_val = pd.to_datetime(ev["start"]).to_pydatetime()
+                end_val = pd.to_datetime(ev["end"]).to_pydatetime()
+
+                with st.form(f"edit_shift_{sid}"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        prov_name_edit = st.selectbox("Provider", options=df_prov["provider_name"].tolist(),
+                                                      index=int(df_prov.index[df_prov["provider_id"]==prov_id][0]))
+                    with c2:
+                        cli_name_edit = st.selectbox("Client", options=df_cli["client_name"].tolist(),
+                                                     index=int(df_cli.index[df_cli["client_id"]==cli_id][0]))
+                    c3, c4 = st.columns(2)
+                    with c3:
+                        start_date_edit = st.date_input("Start Date", value=start_val.date())
+                        start_time_edit = st.time_input("Start Time", value=start_val.time())
+                    with c4:
+                        is_24h_edit = st.checkbox("24-hour call shift (edit)", value=(end_val - start_val).total_seconds() == 24*3600)
+                        end_date_edit = st.date_input("End Date", value=end_val.date(), disabled=is_24h_edit)
+                        end_time_edit = st.time_input("End Time", value=end_val.time(), disabled=is_24h_edit)
+
+                    # Best-effort default shift type
+                    default_type = "Day"
+                    if "(" in ev.get("title","") and ev["title"].endswith(")"):
+                        default_type = ev["title"].split("(")[-1].rstrip(")")
+                    shift_type_edit = st.text_input("Shift Type", value=default_type)
+                    notes_edit = st.text_input("Notes", value=notes_val)
+
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        save = st.form_submit_button("Save changes")
+                    with col2:
+                        dup = st.form_submit_button("Duplicate")
+                    with col3:
+                        delete = st.form_submit_button("Delete")
+
+                if delete:
+                    with engine.begin() as conn:
+                        delete_by_id(conn, shifts, "shift_id", sid)
+                    st.success("Deleted shift.")
+                    st.rerun()
+
+                if save or dup:
+                    new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0]
+                    new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0]
+                    start_dt_new = datetime.combine(start_date_edit, start_time_edit)
+                    if is_24h_edit:
+                        end_dt_new = start_dt_new + timedelta(hours=24)
+                    else:
+                        end_dt_new = datetime.combine(end_date_edit, end_time_edit)
+
+                    row = {
+                        "shift_id": sid if save else generate_id("S"),
+                        "provider_id": new_prov_id,
+                        "client_id": new_cli_id,
+                        "start_datetime": start_dt_new,
+                        "end_datetime": end_dt_new,
+                        "shift_type": shift_type_edit,
+                        "notes": notes_edit,
+                    }
+                    with engine.begin() as conn:
+                        upsert(conn, shifts, row, key="shift_id")
+                    st.success("Saved." if save else "Duplicated.")
+                    st.rerun()
     else:
-        # Fallback simple month table
         st.warning("Calendar component not available — showing simple month table.")
-        import pandas as pd
         days = pd.date_range(first_day, last_day, freq="D")
         table = pd.DataFrame(index=[d.date() for d in days], columns=["Shifts"]).fillna("")
         for _, r in df_shifts.iterrows():
             d = pd.to_datetime(r["start_datetime"]).date()
             prov_name = df_prov.loc[df_prov["provider_id"] == r["provider_id"], "provider_name"].iloc[0]
             cli_name = df_cli.loc[df_cli["client_id"] == r["client_id"], "client_name"].iloc[0]
-            table.at[d, "Shifts"] += f"• {prov_name} @ {cli_name} ({r['shift_type']})\n"
+            table.at[d, "Shifts"] += f"• {prov_name} @ {cli_name} ({r.get('shift_type','')})\n"
         st.dataframe(table, use_container_width=True, height=600)
 
     st.markdown("---")
@@ -387,15 +435,31 @@ with tab_calendar:
         end = st.date_input("Export End", value=last_day)
     with colz:
         if st.button("Export QGenda-friendly CSV", use_container_width=True):
-            with engine.begin() as conn:
-                path = export_qgenda_csv(conn, datetime.combine(start, time.min), datetime.combine(end, time.max))
+            path = export_qgenda_csv(engine.begin(), datetime.combine(start, time.min), datetime.combine(end, time.max))
             st.success(f"Exported to {path}")
             with open(path, "rb") as f:
                 st.download_button("Download CSV", f, file_name=os.path.basename(path), mime="text/csv")
 
-# ----------
+# Shifts table (diagnostics / power users)
+with tab_shifts_table:
+    st.subheader("Shifts — Current Month (Filtered)")
+
+    def attach_names(df):
+        if df.empty:
+            return df
+        pmap = {r["provider_id"]: r["provider_name"] for _, r in df_prov.iterrows()} if not df_prov.empty else {}
+        cmap = {r["client_id"]: r["client_name"] for _, r in df_cli.iterrows()} if not df_cli.empty else {}
+        out = df.copy()
+        out["Provider"] = out["provider_id"].map(pmap)
+        out["Client"] = out["client_id"].map(cmap)
+        out["Start"] = pd.to_datetime(out["start_datetime"]).dt.strftime("%Y-%m-%d %H:%M")
+        out["End"] = pd.to_datetime(out["end_datetime"]).dt.strftime("%Y-%m-%d %H:%M")
+        return out[["shift_id","Provider","Client","Start","End","shift_type","notes"]]
+
+    st.dataframe(attach_names(df_shifts), use_container_width=True, hide_index=True)
+    st.caption("If your event is missing from the Calendar, check here first.")
+
 # Providers
-# ----------
 with tab_providers:
     st.subheader("Manage Providers")
     with st.form("add_provider"):
@@ -429,13 +493,11 @@ with tab_providers:
                     }, key="provider_id")
                 st.success("Saved provider.")
                 st.rerun()
-
     st.markdown("### Current Providers")
-    st.dataframe(df_prov, use_container_width=True, hide_index=True)
+    with engine.begin() as conn:
+        st.dataframe(df_from_table(conn, providers), use_container_width=True, hide_index=True)
 
-# ---------
 # Clients
-# ---------
 with tab_clients:
     st.subheader("Manage Clients")
     with st.form("add_client"):
@@ -459,16 +521,13 @@ with tab_clients:
                     }, key="client_id")
                 st.success("Saved client.")
                 st.rerun()
-
     st.markdown("### Current Clients")
-    st.dataframe(df_cli, use_container_width=True, hide_index=True)
+    with engine.begin() as conn:
+        st.dataframe(df_from_table(conn, clients), use_container_width=True, hide_index=True)
 
-# -------------
 # Credentials
-# -------------
 with tab_credentials:
     st.subheader("Credential Providers to Clients")
-
     if df_prov.empty or df_cli.empty:
         st.info("Add providers and clients first.")
     else:
@@ -486,13 +545,11 @@ with tab_credentials:
                     conn.execute(credentials.insert().values(provider_id=provider_id, client_id=client_id))
                 st.success("Credential added.")
                 st.rerun()
-
     st.markdown("### Current Credentials")
-    st.dataframe(df_creds, use_container_width=True, hide_index=True)
+    with engine.begin() as conn:
+        st.dataframe(df_from_table(conn, credentials), use_container_width=True, hide_index=True)
 
-# -------------------
 # Upload / Download
-# -------------------
 with tab_io:
     st.subheader("Download CSV Templates")
     c1, c2, c3, c4 = st.columns(4)
@@ -520,6 +577,7 @@ with tab_io:
                 else:
                     conn.execute(table.insert(), df.to_dict(orient="records"))
             st.success(f"Imported {len(df)} rows into {label}.")
+            st.rerun()
 
     c1, c2 = st.columns(2)
     with c1:
@@ -529,20 +587,9 @@ with tab_io:
         handle_import("credentials", credentials)
         handle_import("shifts", shifts, key_col="shift_id")
 
-# ---------
 # Settings
-# ---------
 with tab_settings:
     st.subheader("Display & Behavior")
     st.caption("Tweak the look and defaults.")
-    st.toggle("Use 24-hour time (affects labels only)", value=True)
-    st.write("Theme adjustments can be set in `.streamlit/config.toml` for brand colors.")
-
-st.markdown("""
----
-**Tips**
-- Use the sidebar to filter by provider or client and to quickly add a shift.
-- The calendar is interactive: click an event to select it, then delete from the panel shown.
-- For QGenda uploads, export the CSV for the right date range, then map columns in QGenda's import wizard.
-- Need to edit a shift? Delete it, then re-add (MVP). You can extend the app to include inline editing.
-""")
+    st.toggle("Use 24-hour time (labels only)", value=True)
+    st.write("Theme colors can be adjusted in `.streamlit/config.toml`.")
