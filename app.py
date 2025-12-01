@@ -416,10 +416,41 @@ with tab_calendar:
         }
         with st.container():
             cal_state = st_calendar(events=events, options=cal_options, key="main_calendar")
+            # Compact trigger (works even if event clicks are blocked by the environment)
+            top_c1, top_c2 = st.columns([1,6])
+            with top_c1:
+                if st.button("📝 Edit shift…", help="Open shift editor", key="open_shift_modal_btn"):
+                    st.session_state.show_shift_modal = True
+                    st.session_state.clicked_shift = st.session_state.clicked_shift or {}
+                    st.rerun()
+            with top_c2:
+                pass
+
             # Open modal if a shift was clicked
             if st.session_state.get("show_shift_modal") and st.session_state.get("clicked_shift"):
                 cs = st.session_state.clicked_shift
-                with st.modal(f"Shift details — {cs.get('title','')}"):
+                with st.modal("Shift editor"):
+                    # If we didn't arrive via a specific click, let the user choose a shift first
+                    pre = st.session_state.get("clicked_shift")
+                    if not pre:
+                        if not events:
+                            st.info("No shifts to edit in the current filters.")
+                        else:
+                            labels = []
+                            id_by_label = {}
+                            for e in events:
+                                s_val = pd.to_datetime(e["start"]).strftime("%m/%d/%Y %H:%M")
+                                e_val = pd.to_datetime(e["end"]).strftime("%m/%d/%Y %H:%M")
+                                title = e.get("title","")
+                                label = f"{s_val} → {e_val} | {title} [{e['extendedProps']['shift_id']}]"
+                                labels.append(label)
+                                id_by_label[label] = e["extendedProps"]["shift_id"]
+                            pick = st.selectbox("Select a shift", options=labels, key="modal_pick_shift")
+                            if st.button("Open selected"):
+                                st.session_state.clicked_shift = {"shift_id": id_by_label[pick]}
+                                st.rerun()
+                    # If a shift id is present, render the actual editor
+                    cs = st.session_state.get("clicked_shift") {cs.get('title','')}"):
                     # Load fresh row from DB in case it changed
                     with engine.begin() as conn:
                         row = conn.execute(select(shifts).where(shifts.c.shift_id == cs["shift_id"])).mappings().first()
