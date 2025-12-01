@@ -223,14 +223,6 @@ if 'show_shift_modal' not in st.session_state:
 if 'clicked_shift' not in st.session_state:
     st.session_state.clicked_shift = None
 
-if "selected_year" not in st.session_state:
-    today = date.today()
-    st.session_state.selected_year = today.year
-    st.session_state.selected_month = today.month
-if "prov_filter" not in st.session_state:
-    st.session_state.prov_filter = "(All)"
-if "cli_filter" not in st.session_state:
-    st.session_state.cli_filter = "(All)"
 
 with engine.begin() as conn:
     df_prov = df_from_table(conn, providers)
@@ -240,26 +232,7 @@ with engine.begin() as conn:
 
 # Sidebar
 with st.sidebar:
-    st.subheader("Filters & Month")
-    month_names = ["January","February","March","April","May","June","July","August","September","October","November","December"]
-    if not df_shifts.empty:
-        years_in_data = sorted(set(pd.to_datetime(df_shifts["start_datetime"]).dt.year.tolist() + pd.to_datetime(df_shifts["end_datetime"]).dt.year.tolist()))
-        min_year, max_year = min(years_in_data), max(years_in_data)
-        years = list(range(min_year-2, max_year+3))
-    else:
-        cy = date.today().year
-        years = list(range(cy-3, cy+4))
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        sel_month_name = month_names[st.session_state.selected_month-1] if 1 <= st.session_state.selected_month <= 12 else month_names[0]
-        sel_month_name = st.selectbox("Month", options=month_names, index=month_names.index(sel_month_name))
-    with col_b:
-        sel_year = st.selectbox("Year", options=years, index=years.index(st.session_state.selected_year) if st.session_state.selected_year in years else len(years)//2)
-
-    st.session_state.selected_month = int(month_names.index(sel_month_name) + 1)
-    st.session_state.selected_year = int(sel_year)
-
+    st.subheader("Filters")
     prov_filter = st.selectbox(
         "Filter by Provider", options=["(All)"] + (sorted(df_prov["provider_name"].tolist()) if not df_prov.empty else []), key="prov_filter"
     ) if not df_prov.empty else "(All)"
@@ -269,12 +242,47 @@ with st.sidebar:
 
     safe_mode = st.toggle("Safe mode: auto-fix filters", value=True, help="Prevents crashes if a filter choice no longer exists.")
 
-    if st.button("Clear all filters (jump to current month)"):
-        reset_filters(jump_to_today=True)
+    if st.button("Clear provider/client filters"):
+        st.session_state.pop('prov_filter', None)
+        st.session_state.pop('cli_filter', None)
         st.rerun()
-    if st.button("Clear provider/client filters only"):
-        reset_filters(jump_to_today=False)
-        st.rerun()
+
+    st.markdown("---")
+    st.subheader("Quick Add Shift")
+    with st.form("quick_add_shift"):
+        provider_id = None
+        client_id = None
+        if df_prov.empty or df_cli.empty:
+            st.info("Add providers and clients first in their tabs below.")
+        else:
+            prov_name = st.selectbox("Provider", options=df_prov["provider_name"].tolist())
+            provider_id = df_prov.loc[df_prov["provider_name"] == prov_name, "provider_id"].iloc[0]
+            cli_name = st.selectbox("Client", options=df_cli["client_name"].tolist())
+            client_id = df_cli.loc[df_cli["client_name"] == cli_name, "client_id"].iloc[0]
+
+        shift_date = st.date_input("Date", value=date.today())
+        start_t = st.time_input("Start", value=time(8, 0))
+        is_24h = st.checkbox("24-hour call shift", value=False, help="Ends 24 hours after start (next day).")
+        end_t = st.time_input("End", value=time(16, 0), disabled=is_24h)
+        shift_type = st.text_input("Shift Type", value="Call (24h)" if is_24h else "Day")
+        notes = st.text_input("Notes", value="")
+        submitted = st.form_submit_button("Add Shift")
+        if submitted and provider_id and client_id:
+            with engine.begin() as conn:
+                sid = generate_id("S")
+                start_dt = datetime.combine(shift_date, start_t)
+                end_dt = start_dt + timedelta(hours=24) if is_24h else datetime.combine(shift_date, end_t)
+                upsert(conn, shifts, {
+                    "shift_id": sid,
+                    "provider_id": provider_id,
+                    "client_id": client_id,
+                    "start_datetime": start_dt,
+                    "end_datetime": end_dt,
+                    "shift_type": shift_type,
+                    "notes": notes,
+                }, key="shift_id")
+            st.success("Shift added.")
+            st.rerun()
 
     st.markdown("---")
     st.subheader("Quick Add Shift")
@@ -321,7 +329,7 @@ with engine.begin() as conn:
     df_shifts = df_from_table(conn, shifts)
 
 # Build filtered sets
-first_day, last_day = month_range(st.session_state.selected_year, st.session_state.selected_month)
+first_day, last_day = month_range(date.today().year, date.today().month)
 
 df_shifts_all = df_shifts.copy()
 df_shifts_filtered = df_shifts_all.copy()
@@ -357,7 +365,7 @@ tab_calendar, tab_shifts_table, tab_bulk, tab_providers, tab_clients, tab_creden
 
 # Calendar
 with tab_calendar:
-    st.subheader(f"Monthly View — {first_day.strftime('%B %Y')}")
+    st.subheader("Monthly View")
 
     # Build events from ALL-TIME filtered shifts
     events = []
