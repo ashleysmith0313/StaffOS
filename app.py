@@ -261,6 +261,156 @@ def export_calendar_excel(conn, start_dt: datetime, end_dt: datetime) -> str:
                 out.to_excel(writer, index=False, sheet_name=sheet)
     return out_path
 
+
+
+def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: datetime) -> str:
+    """
+    Create a single self-contained HTML file with one month grid per month in [start_dt, end_dt].
+    Uses brand colors and lists events inside each day cell. No external dependencies.
+    Expects df columns: provider_id, client_id, start_datetime, end_datetime, shift_type, notes.
+    """
+    # Helper: month iterator
+    def month_iter(start_d: date, end_d: date):
+        cur = date(start_d.year, start_d.month, 1)
+        while cur <= end_d:
+            yield cur.year, cur.month
+            if cur.month == 12:
+                cur = date(cur.year + 1, 1, 1)
+            else:
+                cur = date(cur.year, cur.month + 1, 1)
+
+    # Build name maps
+    with engine.begin() as conn:
+        dfp = pd.DataFrame(conn.execute(select(providers)).mappings().all())
+        dfc = pd.DataFrame(conn.execute(select(clients)).mappings().all())
+    pmap = {r["provider_id"]: r["provider_name"] for _, r in dfp.iterrows()} if not dfp.empty else {}
+    cmap = {r["client_id"]: r["client_name"] for _, r in dfc.iterrows()} if not dfc.empty else {}
+
+    # Pre-convert datetimes
+    dd = df.copy()
+    if dd.empty:
+        dd = pd.DataFrame(columns=["provider_id","client_id","start_datetime","end_datetime","shift_type","notes"])
+    dd["Start"] = pd.to_datetime(dd["start_datetime"])
+    dd["End"] = pd.to_datetime(dd["end_datetime"])
+
+    # Filter to range
+    dd = dd[(dd["Start"] >= pd.Timestamp(start_dt)) & (dd["End"] <= pd.Timestamp(end_dt))].copy()
+    dd.sort_values("Start", inplace=True)
+
+    # Group events by date
+    dd["Date"] = dd["Start"].dt.date
+    events_by_date = {}
+    for _, r in dd.iterrows():
+        d = r["Date"]
+        events_by_date.setdefault(d, []).append(r)
+
+    # HTML/CSS
+    css = f"""
+    <style>
+      body {{ font-family: system-ui, -apple-system, Arial, sans-serif; color:#1e1e1e; }}
+      h1 {{ margin: 0.5rem 0 1rem; }}
+      .month {{ page-break-after: always; break-after: page; }}
+      .grid {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+      .grid th {{ text-align:center; padding:8px; background:#d4eae5; border:1px solid #eee; }}
+      .grid td {{ vertical-align: top; height: 120px; border:1px solid #eee; padding:6px; }}
+      .dow {{ background:#d4eae5; font-weight:600; }}
+      .daynum {{ font-size: 12px; opacity: 0.7; margin-bottom: 4px; }}
+      .event {{ font-size: 12px; border-radius:6px; padding:4px 6px; margin:4px 0; display:block; background:{'{'}COLOR_DEFAULT{'}'}; }}
+      .event.day {{ background:{'{'}COLOR_DAY{'}'}; color: white; }}
+      .event.night {{ background:{'{'}COLOR_NIGHT{'}'}; color: white; }}
+      .event.call24 {{ background:{'{'}COLOR_CALL24{'}'}; color: white; }}
+      .legend {{ margin-top:8px; font-size:12px; }}
+      .legend span {{ display:inline-flex; align-items:center; margin-right:14px; }}
+      .legend i {{ width:12px; height:12px; display:inline-block; margin-right:6px; border-radius:3px;}}
+    </style>
+    """
+
+    html = [f"<!doctype html><html><head><meta charset='utf-8'><title>Calendar {start_dt.date()} to {end_dt.date()}</title>{css}</head><body>"]
+    html.append(f"<h1>Calendar — {start_dt.strftime('%m/%d/%Y')} to {end_dt.strftime('%m/%d/%Y')}</h1>")
+    html.append(f"<div class='legend'>"
+                f"<span><i style='background:{COLOR_DEFAULT}'></i>Other</span>"
+                f"<span><i style='background:{COLOR_DAY}'></i>Day</span>"
+                f"<span><i style='background:{COLOR_NIGHT}'></i>Night</span>"
+                f"<span><i style='background:{COLOR_CALL24}'></i>24h Call</span>"
+                f"</div>")
+
+    for y, m in month_iter(start_dt.date(), end_dt.date()):
+        # Build month grid
+        first = date(y, m, 1)
+        last = (first + relativedelta(months=1)) - timedelta(days=1)
+        start_weekday = first.weekday()  # Mon=0..Sun=6
+        # We want Sun..Sat header, so map to that layout
+        # Calculate days: create a list of weeks, each week is 7 dates (or None for padding)
+        days = []
+        cur = first
+        # Fill leading pad (from Sunday)
+        lead = (start_weekday + 1) % 7  # how many days before Monday to reach Sunday
+        week = [None]*7
+        # position of first day in Sun..Sat
+        pos = (first.weekday() + 1) % 7
+        i = pos
+        w = [None]*7
+        d = first
+        # iterate all days placing into weeks
+        weeks = []
+        w = [None]*7
+        idx = pos
+        dt_iter = first
+        while dt_iter <= last:
+            w[idx] = dt_iter
+            if idx == 6:
+                weeks.append(w)
+                w = [None]*7
+                idx = 0
+            else:
+                idx += 1
+            dt_iter = dt_iter + timedelta(days=1)
+        if any(x is not None for x in w):
+            weeks.append(w)
+
+        # Month title
+        month_label = datetime(y, m, 1).strftime("%B %Y")
+        html.append(f"<div class='month'><h2>{month_label}</h2>")
+        html.append("<table class='grid'>")
+        html.append("<tr class='dow'><th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th></tr>")
+        for wk in weeks:
+            html.append("<tr>")
+            for cell in wk:
+                if cell is None:
+                    html.append("<td></td>")
+                else:
+                    html.append("<td>")
+                    html.append(f"<div class='daynum'>{cell.day}</div>")
+                    # events for this day
+                    evs = events_by_date.get(cell, [])
+                    for r in evs:
+                        start_str = pd.to_datetime(r['start_datetime']).strftime("%-I%p").lower()
+                        end_str = pd.to_datetime(r['end_datetime']).strftime("%-I%p").lower()
+                        title = f"{pmap.get(r['provider_id'],'?')} @ {cmap.get(r['client_id'],'?')}"
+                        label = title
+                        if r.get('shift_type'):
+                            label += f" ({r['shift_type']})"
+                        # classify
+                        dur_h = (pd.to_datetime(r['end_datetime']) - pd.to_datetime(r['start_datetime'])).total_seconds() / 3600.0
+                        cls = "event "
+                        if abs(dur_h - 24.0) < 0.01:
+                            cls += "call24"
+                        elif isinstance(r.get('shift_type'), str) and "night" in r.get('shift_type',"").lower():
+                            cls += "night"
+                        elif isinstance(r.get('shift_type'), str) and "day" in r.get('shift_type',"").lower():
+                            cls += "day"
+                        else:
+                            cls += ""
+                        html.append(f"<span class='{cls}'>{label}</span>")
+                    html.append("</td>")
+            html.append("</tr>")
+        html.append("</table></div>")
+
+    html.append("</body></html>")
+    out_path = os.path.join(EXPORTS_DIR, f"calendar_visual_{start_dt.date()}_to_{end_dt.date()}.html")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("".join(html))
+    return out_path
 def export_calendar_ics(conn, start_dt: datetime, end_dt: datetime) -> str:
     """Generate an .ics calendar for the range that can be imported into most calendar apps."""
     q = (
@@ -712,6 +862,16 @@ with tab_calendar:
                 with open(path_ics, "rb") as f:
                     st.download_button("Download ICS", f, file_name=os.path.basename(path_ics), mime="text/calendar")
     with colxc:
+        if st.button("Export Calendar Visual (HTML)"):
+            if (exp_end - exp_start).days > 366:
+                st.error("Please select a range of 366 days or less.")
+            else:
+                # Use CURRENT FILTERS (provider/client) by exporting from df_shifts_filtered
+                path_html = export_calendar_visual_html(df_shifts_filtered, datetime.combine(exp_start, time.min), datetime.combine(exp_end, time.max))
+                st.success(f"Exported to {path_html}")
+                with open(path_html, "rb") as f:
+                    st.download_button("Download HTML", f, file_name=os.path.basename(path_html), mime="text/html")
+
         st.write("")  # spacer
 
 # Shifts table (diagnostics / power users) with filters and inline editor
