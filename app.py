@@ -21,7 +21,7 @@ except Exception:
 # ----------------------
 # Configuration & Paths
 # ----------------------
-APP_TITLE = "StaffOS - VISTA Provider Scheduling"
+APP_TITLE = "Provider Scheduling"
 DB_PATH = os.path.join("data", "scheduling.db")
 EXPORTS_DIR = "exports"
 IMPORTS_DIR = "imports"
@@ -76,6 +76,18 @@ with engine.begin() as conn:
 # ----------------------
 # Helpers
 # ----------------------
+
+def reset_filters(jump_to_today: bool = False):
+    """Safely reset provider/client filters and optionally jump to current month.
+    We POP the widget keys so Streamlit recreates them with default values next run.
+    """
+    st.session_state.pop('prov_filter', None)
+    st.session_state.pop('cli_filter', None)
+    if jump_to_today:
+        today = date.today()
+        st.session_state['selected_year'] = today.year
+        st.session_state['selected_month'] = today.month
+
 
 def safe_select_index(series, predicate, default=0):
     try:
@@ -253,15 +265,10 @@ with st.sidebar:
     safe_mode = st.toggle("Safe mode: auto-fix filters", value=True, help="Prevents crashes if a filter choice no longer exists.")
 
     if st.button("Clear all filters (jump to current month)"):
-        today = date.today()
-        st.session_state.selected_year = today.year
-        st.session_state.selected_month = today.month
-        st.session_state.prov_filter = "(All)"
-        st.session_state.cli_filter = "(All)"
+        reset_filters(jump_to_today=True)
         st.rerun()
     if st.button("Clear provider/client filters only"):
-        st.session_state.prov_filter = "(All)"
-        st.session_state.cli_filter = "(All)"
+        reset_filters(jump_to_today=False)
         st.rerun()
 
     st.markdown("---")
@@ -310,29 +317,36 @@ with engine.begin() as conn:
 
 first_day, last_day = month_range(st.session_state.selected_year, st.session_state.selected_month)
 
-# Filter shifts for month and by filters
-if not df_shifts.empty:
-    df_shifts = df_shifts[(df_shifts["start_datetime"] >= pd.Timestamp(first_day)) & (df_shifts["end_datetime"] <= pd.Timestamp(last_day) + pd.Timedelta(days=1))]
+# --- New filtering model ---
+# 1) Start with ALL shifts
+df_shifts_all = df_shifts.copy()
+
+# 2) Apply provider/client filters across ALL time (not just the month)
 if prov_filter != "(All)" and not df_prov.empty:
-    pid = df_prov.loc[df_prov["provider_name"] == prov_filter, "provider_id"].iloc[0] if (not df_prov.empty and (df_prov["provider_name"] == prov_filter).any()) else None
-    df_shifts = df_shifts[df_shifts["provider_id"] == pid] if pid is not None else df_shifts
+    pid = df_prov.loc[df_prov["provider_name"] == prov_filter, "provider_id"].iloc[0] if (df_prov["provider_name"] == prov_filter).any() else None
+    if pid is not None:
+        df_shifts_filtered = df_shifts_all[df_shifts_all["provider_id"] == pid]
+    else:
+        df_shifts_filtered = df_shifts_all.copy()
+else:
+    df_shifts_filtered = df_shifts_all.copy()
+
 if cli_filter != "(All)" and not df_cli.empty:
-    cid = df_cli.loc[df_cli["client_name"] == cli_filter, "client_id"].iloc[0] if (not df_cli.empty and (df_cli["client_name"] == cli_filter).any()) else None
-    df_shifts = df_shifts[df_shifts["client_id"] == cid] if cid is not None else df_shifts
+    cid = df_cli.loc[df_cli["client_name"] == cli_filter, "client_id"].iloc[0] if (df_cli["client_name"] == cli_filter).any() else None
+    if cid is not None:
+        df_shifts_filtered = df_shifts_filtered[df_shifts_filtered["client_id"] == cid]
 
+# 3) For the calendar, we create a month-limited view of the filtered set
+df_shifts_month = df_shifts_filtered[
+    (df_shifts_filtered["start_datetime"] >= pd.Timestamp(first_day)) &
+    (df_shifts_filtered["end_datetime"] <= pd.Timestamp(last_day) + pd.Timedelta(days=1))
+] if not df_shifts_filtered.empty else df_shifts_filtered.copy()
 
-# Auto-fix broken filters
-if safe_mode:
-    if prov_filter != "(All)" and (df_prov.empty or not (df_prov["provider_name"] == prov_filter).any()):
-        st.session_state.prov_filter = "(All)"
-        st.info("Provider filter was invalid and has been reset to (All).")
-        st.rerun()
-    if cli_filter != "(All)" and (df_cli.empty or not (df_cli["client_name"] == cli_filter).any()):
-        st.session_state.cli_filter = "(All)"
-        st.info("Client filter was invalid and has been reset to (All).")
-        st.rerun()
+# (We will use df_shifts_month only for the Calendar tab; the Shifts Table uses df_shifts_filtered)
+# ---------------------------
 
 # Tabs
+
 tab_calendar, tab_shifts_table, tab_providers, tab_clients, tab_credentials, tab_io, tab_settings = st.tabs([
     "📅 Calendar", "📋 Shifts (Table)", "👩‍⚕️ Providers", "🏥 Clients", "🔐 Credentials", "⬆️⬇️ Upload/Download", "⚙️ Settings"
 ])
@@ -341,14 +355,14 @@ tab_calendar, tab_shifts_table, tab_providers, tab_clients, tab_credentials, tab
 with tab_calendar:
     st.subheader(f"Monthly View — {first_day.strftime('%B %Y')}")
     with st.expander("Debug: Show raw shifts for this month"):
-        st.dataframe(df_shifts, use_container_width=True, hide_index=True)
+        st.dataframe(df_shifts_month, use_container_width=True, hide_index=True)
 
     # Build events for the calendar
     events = []
-    if not df_shifts.empty:
+    if not df_shifts_month.empty:
         pmap = {r["provider_id"]: r["provider_name"] for _, r in df_prov.iterrows()} if not df_prov.empty else {}
         cmap = {r["client_id"]: r["client_name"] for _, r in df_cli.iterrows()} if not df_cli.empty else {}
-        for _, r in df_shifts.iterrows():
+        for _, r in df_shifts_month.iterrows():
             prov_name = pmap.get(r["provider_id"], "Unknown Provider")
             cli_name = cmap.get(r["client_id"], "Unknown Client")
             title = f"{prov_name} @ {cli_name} ({r['shift_type']})" if r.get("shift_type") else f"{prov_name} @ {cli_name}"
@@ -380,6 +394,10 @@ with tab_calendar:
             "initialDate": first_day.isoformat(),
             "headerToolbar": {"left": "prev,next today", "center": "title", "right": "dayGridMonth,timeGridWeek,timeGridDay,listWeek"},
             "height": 720,
+            "selectable": True,
+            "navLinks": True,
+            "eventStartEditable": False,
+            "eventDurationEditable": False,
         }
         with st.container():
             cal_state = st_calendar(events=events, options=cal_options, key="main_calendar")
@@ -473,6 +491,104 @@ with tab_calendar:
                     st.rerun()
             else:
                 st.info("Tip: click a calendar event to edit it. If clicking doesn't open a form, use the selector below.")
+            # Always-on selector for editing (shows even if you can click events)
+            st.markdown("### Edit events in this month")
+            if events:
+                options = []
+                for e in events:
+                    s_val = pd.to_datetime(e["start"]).strftime("%Y-%m-%d %H:%M")
+                    e_val = pd.to_datetime(e["end"]).strftime("%Y-%m-%d %H:%M")
+                    title = e.get("title","")
+                    label = f"{s_val} → {e_val} | {title} [{e['extendedProps']['shift_id']}]"
+                    options.append((label, e["extendedProps"]["shift_id"]))
+                labels = [o[0] for o in options]
+                ids = {o[0]: o[1] for o in options}
+
+                selected_label = st.selectbox("Pick a shift to edit", options=labels, key="month_editor_select")
+                selected_id = ids[selected_label]
+
+                with engine.begin() as conn:
+                    row = conn.execute(select(shifts).where(shifts.c.shift_id == selected_id)).mappings().first()
+
+                if row:
+                    with st.form(f"edit_shift_calendar_always_{selected_id}"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            prov_options = df_prov["provider_name"].tolist() if not df_prov.empty else ["(none)"]
+                            prov_index = 0
+                            if not df_prov.empty and (df_prov["provider_id"] == row["provider_id"]).any():
+                                prov_index = int(df_prov.index[df_prov["provider_id"]==row["provider_id"]][0])
+                            prov_name_edit = st.selectbox("Provider", options=prov_options, index=min(prov_index, max(len(prov_options)-1,0)))
+                        with c2:
+                            cli_options = df_cli["client_name"].tolist() if not df_cli.empty else ["(none)"]
+                            cli_index = 0
+                            if not df_cli.empty and (df_cli["client_id"] == row["client_id"]).any():
+                                cli_index = int(df_cli.index[df_cli["client_id"]==row["client_id"]][0])
+                            cli_name_edit = st.selectbox("Client", options=cli_options, index=min(cli_index, max(len(cli_options)-1,0)))
+
+                        start_val2 = pd.to_datetime(row["start_datetime"]).to_pydatetime()
+                        end_val2 = pd.to_datetime(row["end_datetime"]).to_pydatetime()
+
+                        c3, c4 = st.columns(2)
+                        with c3:
+                            start_date_edit = st.date_input("Start Date", value=start_val2.date(), key=f"se_{selected_id}_sd")
+                            start_time_edit = st.time_input("Start Time", value=start_val2.time(), key=f"se_{selected_id}_st")
+                        with c4:
+                            is_24h_edit = st.checkbox("24-hour call shift", value=(end_val2 - start_val2).total_seconds() == 24*3600, key=f"se_{selected_id}_24")
+                            end_date_edit = st.date_input("End Date", value=end_val2.date(), disabled=is_24h_edit, key=f"se_{selected_id}_ed")
+                            end_time_edit = st.time_input("End Time", value=end_val2.time(), disabled=is_24h_edit, key=f"se_{selected_id}_et")
+
+                        shift_type_edit = st.text_input("Shift Type", value=row.get("shift_type") or "Day", key=f"se_{selected_id}_type")
+                        notes_edit = st.text_input("Notes", value=row.get("notes") or "", key=f"se_{selected_id}_notes")
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            save = st.form_submit_button("Save changes")
+                        with col2:
+                            dup = st.form_submit_button("Duplicate")
+                        with col3:
+                            delete = st.form_submit_button("Delete")
+
+                    if delete:
+                        with engine.begin() as conn:
+                            delete_by_id(conn, shifts, "shift_id", selected_id)
+                        st.success("Deleted shift.")
+                        st.rerun()
+
+                    if save or dup:
+                        new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0] if prov_name_edit in (df_prov["provider_name"].tolist() if not df_prov.empty else []) else row["provider_id"]
+                        new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0] if cli_name_edit in (df_cli["client_name"].tolist() if not df_cli.empty else []) else row["client_id"]
+                        start_dt_new = datetime.combine(start_date_edit, start_time_edit)
+                        if is_24h_edit:
+                            end_dt_new = start_dt_new + timedelta(hours=24)
+                        else:
+                            end_dt_new = datetime.combine(end_date_edit, end_time_edit)
+
+                        new_row = {
+                            "shift_id": selected_id if save else generate_id("S"),
+                            "provider_id": new_prov_id,
+                            "client_id": new_cli_id,
+                            "start_datetime": start_dt_new,
+                            "end_datetime": end_dt_new,
+                            "shift_type": shift_type_edit,
+                            "notes": notes_edit,
+                        }
+                        with engine.begin() as conn:
+                            upsert(conn, shifts, new_row, key="shift_id")
+                        st.success("Saved." if save else "Duplicated.")
+                        st.rerun()
+
+            # Edit events on a specific date
+            st.markdown("### Edit events on date")
+            day_pick = st.date_input("Choose a date", value=first_day, key="calendar_day_picker")
+            day_events = [e for e in events if pd.to_datetime(e["start"]).date() == pd.to_datetime(day_pick).date()]
+            if day_events:
+                st.write(f"{len(day_events)} event(s) on {day_pick}:")
+                for e in day_events:
+                    st.write("•", e["title"])
+            else:
+                st.write("No events on this date.")
+
                 if events:
                     options = []
                     for e in events:
@@ -561,7 +677,7 @@ with tab_calendar:
         st.warning("Calendar component not available — showing simple month table.")
         days = pd.date_range(first_day, last_day, freq="D")
         table = pd.DataFrame(index=[d.date() for d in days], columns=["Shifts"]).fillna("")
-        for _, r in df_shifts.iterrows():
+        for _, r in df_shifts_month.iterrows():
             d = pd.to_datetime(r["start_datetime"]).date()
             prov_name = df_prov.loc[df_prov["provider_id"] == r["provider_id"], "provider_name"].iloc[0] if not df_prov.empty else "Unknown"
             cli_name = df_cli.loc[df_cli["client_id"] == r["client_id"], "client_name"].iloc[0] if not df_cli.empty else "Unknown"
@@ -582,7 +698,9 @@ with tab_calendar:
             with open(path, "rb") as f:
                 st.download_button("Download CSV", f, file_name=os.path.basename(path), mime="text/csv")
 with tab_shifts_table:
-    st.subheader("Shifts — Current Month (Filtered)")
+    st.subheader("Shifts — All Time (filtered by Provider/Client)")
+    limit_to_month = st.checkbox("Limit to current month", value=False, help="Turn on to view only the currently selected month in this table.")
+
 
     def attach_names(df):
         if df.empty:
@@ -596,7 +714,7 @@ with tab_shifts_table:
         out["End"] = pd.to_datetime(out["end_datetime"]).dt.strftime("%Y-%m-%d %H:%M")
         return out[["shift_id","Provider","Client","Start","End","shift_type","notes"]]
 
-    table_df = attach_names(df_shifts)
+    table_df = attach_names(df_shifts_month if limit_to_month else df_shifts_filtered)
     st.dataframe(table_df, use_container_width=True, hide_index=True)
     st.caption("Tip: Use the editor below to modify a specific shift directly from this tab.")
 
