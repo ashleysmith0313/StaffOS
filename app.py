@@ -294,9 +294,29 @@ def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: da
     dd["End"] = pd.to_datetime(dd["end_datetime"])
 
     # Filter to range
-    dd = dd[(dd["Start"] >= pd.Timestamp(start_dt)) & (dd["End"] <= pd.Timestamp(end_dt))].copy()
-    dd.sort_values("Start", inplace=True)
+    dd = dd[((dd["End"] >= pd.Timestamp(start_dt)) & (dd["Start"] <= pd.Timestamp(end_dt)))].copy()
 
+    # Fallback: if empty (e.g., caller passed an empty df), query DB with same range and current filters
+    if dd.empty:
+        prov_name = st.session_state.get("prov_filter") if "prov_filter" in st.session_state else "(All)"
+        cli_name = st.session_state.get("cli_filter") if "cli_filter" in st.session_state else "(All)"
+        with engine.begin() as _conn:
+            q = select(shifts)
+            if prov_name and prov_name != "(All)":
+                pid = _conn.execute(select(providers.c.provider_id).where(providers.c.provider_name == prov_name)).scalar()
+                if pid:
+                    q = q.where(shifts.c.provider_id == pid)
+            if cli_name and cli_name != "(All)":
+                cid = _conn.execute(select(clients.c.client_id).where(clients.c.client_name == cli_name)).scalar()
+                if cid:
+                    q = q.where(shifts.c.client_id == cid)
+            q = q.where(and_(shifts.c.end_datetime >= start_dt, shifts.c.start_datetime <= end_dt)).order_by(shifts.c.start_datetime)
+            dd = pd.DataFrame(_conn.execute(q).mappings().all())
+            if dd.empty:
+                dd = pd.DataFrame(columns=["provider_id","client_id","start_datetime","end_datetime","shift_type","notes"])
+            dd["Start"] = pd.to_datetime(dd["start_datetime"])
+            dd["End"] = pd.to_datetime(dd["end_datetime"])
+    dd.sort_values("Start", inplace=True)
     # Group events by date
     dd["Date"] = dd["Start"].dt.date
     events_by_date = {}
