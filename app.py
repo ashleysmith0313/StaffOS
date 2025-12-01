@@ -148,7 +148,8 @@ def export_qgenda_csv(conn, start_dt: datetime, end_dt: datetime) -> str:
         .where(and_(shifts.c.start_datetime >= start_dt, shifts.c.end_datetime <= end_dt))
         .order_by(shifts.c.start_datetime)
     )
-    df = pd.DataFrame(engine.begin().execute(q).mappings().all())
+    with engine.begin() as _conn:
+        df = pd.DataFrame(_conn.execute(q).mappings().all())
     if df.empty:
         df = pd.DataFrame(columns=[
             "ProviderID","ProviderName","ClientID","ClientName","Location",
@@ -231,7 +232,8 @@ def export_calendar_excel(conn, start_dt: datetime, end_dt: datetime) -> str:
         .where(and_(shifts.c.start_datetime >= start_dt, shifts.c.end_datetime <= end_dt))
         .order_by(shifts.c.start_datetime)
     )
-    df = pd.DataFrame(engine.begin().execute(q).mappings().all())
+    with engine.begin() as _conn:
+        df = pd.DataFrame(_conn.execute(q).mappings().all())
     # Build Excel
     out_path = os.path.join(EXPORTS_DIR, f"calendar_{start_dt.date()}_to_{end_dt.date()}.xlsx")
     with pd.ExcelWriter(out_path, engine="xlsxwriter") as writer:
@@ -276,7 +278,8 @@ def export_calendar_ics(conn, start_dt: datetime, end_dt: datetime) -> str:
         .where(and_(shifts.c.start_datetime >= start_dt, shifts.c.end_datetime <= end_dt))
         .order_by(shifts.c.start_datetime)
     )
-    rows = engine.begin().execute(q).mappings().all()
+    with engine.begin() as _conn:
+        rows = _conn.execute(q).mappings().all()
     def fmt_dt(dt: pd.Timestamp | datetime) -> str:
         # produce UTC-like floating time in basic format YYYYMMDDTHHMMSS
         ts = pd.to_datetime(dt)
