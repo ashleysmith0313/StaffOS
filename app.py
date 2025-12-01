@@ -343,17 +343,29 @@ with tab_calendar:
     with st.expander("Debug: Show raw shifts for this month"):
         st.dataframe(df_shifts, use_container_width=True, hide_index=True)
 
-    # Build events
+    # Build events for the calendar
     events = []
-    if not df_shifts.empty and not df_prov.empty and not df_cli.empty:
+    if not df_shifts.empty:
+        pmap = {r["provider_id"]: r["provider_name"] for _, r in df_prov.iterrows()} if not df_prov.empty else {}
+        cmap = {r["client_id"]: r["client_name"] for _, r in df_cli.iterrows()} if not df_cli.empty else {}
         for _, r in df_shifts.iterrows():
-            prov_name = df_prov.loc[df_prov["provider_id"] == r["provider_id"], "provider_name"].iloc[0]
-            cli_name = df_cli.loc[df_cli["client_id"] == r["client_id"], "client_name"].iloc[0]
+            prov_name = pmap.get(r["provider_id"], "Unknown Provider")
+            cli_name = cmap.get(r["client_id"], "Unknown Client")
             title = f"{prov_name} @ {cli_name} ({r['shift_type']})" if r.get("shift_type") else f"{prov_name} @ {cli_name}"
+            duration_hours = (pd.to_datetime(r["end_datetime"]) - pd.to_datetime(r["start_datetime"])).total_seconds() / 3600.0
+            if abs(duration_hours - 24.0) < 0.01:
+                color = COLOR_CALL24
+            elif isinstance(r.get("shift_type"), str) and "night" in r.get("shift_type","").lower():
+                color = COLOR_NIGHT
+            elif isinstance(r.get("shift_type"), str) and "day" in r.get("shift_type","").lower():
+                color = COLOR_DAY
+            else:
+                color = COLOR_DEFAULT
             events.append({
                 "title": title,
                 "start": pd.to_datetime(r["start_datetime"]).isoformat(),
                 "end": pd.to_datetime(r["end_datetime"]).isoformat(),
+                "color": color,
                 "extendedProps": {
                     "shift_id": r["shift_id"],
                     "provider_id": r["provider_id"],
@@ -387,7 +399,6 @@ with tab_calendar:
                 ev = cal_state["clickedEvent"]
                 st.info(f"Selected: {ev['title']}")
 
-                # Load values
                 sid = ev["extendedProps"]["shift_id"]
                 prov_id = ev["extendedProps"]["provider_id"]
                 cli_id = ev["extendedProps"]["client_id"]
@@ -465,10 +476,10 @@ with tab_calendar:
                 if events:
                     options = []
                     for e in events:
-                        start_val = pd.to_datetime(e["start"]).strftime("%Y-%m-%d %H:%M")
-                        end_val = pd.to_datetime(e["end"]).strftime("%Y-%m-%d %H:%M")
+                        s_val = pd.to_datetime(e["start"]).strftime("%Y-%m-%d %H:%M")
+                        e_val = pd.to_datetime(e["end"]).strftime("%Y-%m-%d %H:%M")
                         title = e.get("title","")
-                        label = f"{start_val} → {end_val} | {title} [{e['extendedProps']['shift_id']}]"
+                        label = f"{s_val} → {e_val} | {title} [{e['extendedProps']['shift_id']}]"
                         options.append((label, e["extendedProps"]["shift_id"]))
                     labels = [o[0] for o in options]
                     ids = {o[0]: o[1] for o in options}
@@ -556,7 +567,8 @@ with tab_calendar:
             cli_name = df_cli.loc[df_cli["client_id"] == r["client_id"], "client_name"].iloc[0] if not df_cli.empty else "Unknown"
             table.at[d, "Shifts"] += f"• {prov_name} @ {cli_name} ({r.get('shift_type','')})\n"
         st.dataframe(table, use_container_width=True, height=600)
-st.markdown("---")
+
+    st.markdown("---")
     st.subheader("Export")
     colx, coly, colz = st.columns(3)
     with colx:
@@ -569,8 +581,6 @@ st.markdown("---")
             st.success(f"Exported to {path}")
             with open(path, "rb") as f:
                 st.download_button("Download CSV", f, file_name=os.path.basename(path), mime="text/csv")
-
-# Shifts table (diagnostics / power users)
 with tab_shifts_table:
     st.subheader("Shifts — Current Month (Filtered)")
 
