@@ -183,6 +183,10 @@ def export_qgenda_csv(conn, start_dt: datetime, end_dt: datetime) -> str:
             "StartDateTime","EndDateTime","ShiftType","Notes"
         ]]
     out_path = os.path.join(EXPORTS_DIR, f"qgenda_export_{start_dt.date()}_to_{end_dt.date()}.csv")
+    # Format datetimes as mm/dd/yyyy HH:MM for export
+    if not df.empty:
+        for col in ["StartDateTime","EndDateTime"]:
+            df[col] = pd.to_datetime(df[col]).dt.strftime("%m/%d/%Y %H:%M")
     df.to_csv(out_path, index=False)
     return out_path
 
@@ -247,13 +251,28 @@ with engine.begin() as conn:
 # Sidebar filters
 with st.sidebar:
     st.subheader("Filters & Month")
+    # Build dropdowns for Month and Year
+    month_names = ["January","February","March","April","May","June","July","August","September","October","November","December"]
+    # Derive sensible year range from data if present
+    if not df_shifts.empty:
+        years_in_data = sorted(set(pd.to_datetime(df_shifts["start_datetime"]).dt.year.tolist() + pd.to_datetime(df_shifts["end_datetime"]).dt.year.tolist()))
+        min_year, max_year = min(years_in_data), max(years_in_data)
+        # pad a couple extra years on both sides
+        years = list(range(min_year-2, max_year+3))
+    else:
+        from datetime import date
+        cy = date.today().year
+        years = list(range(cy-3, cy+4))
+
     col_a, col_b = st.columns(2)
     with col_a:
-        year = st.number_input("Year", min_value=2000, max_value=2100, value=st.session_state.selected_year, step=1)
+        sel_year = st.selectbox("Year", options=years, index=years.index(st.session_state.selected_year) if st.session_state.selected_year in years else len(years)//2)
     with col_b:
-        month = st.number_input("Month", min_value=1, max_value=12, value=st.session_state.selected_month, step=1)
-    st.session_state.selected_year = year
-    st.session_state.selected_month = month
+        sel_month_name = month_names[st.session_state.selected_month-1] if 1 <= st.session_state.selected_month <= 12 else month_names[0]
+        sel_month_name = st.selectbox("Month", options=month_names, index=month_names.index(sel_month_name))
+
+    st.session_state.selected_year = int(sel_year)
+    st.session_state.selected_month = int(month_names.index(sel_month_name) + 1)
 
     prov_filter = st.selectbox(
         "Filter by Provider", options=["(All)"] + (sorted(df_prov["provider_name"].tolist()) if not df_prov.empty else []), key="prov_filter"
@@ -496,8 +515,8 @@ with tab_calendar:
             if events:
                 options = []
                 for e in events:
-                    s_val = pd.to_datetime(e["start"]).strftime("%Y-%m-%d %H:%M")
-                    e_val = pd.to_datetime(e["end"]).strftime("%Y-%m-%d %H:%M")
+                    s_val = pd.to_datetime(e["start"]).strftime("%m/%d/%Y %H:%M")
+                    e_val = pd.to_datetime(e["end"]).strftime("%m/%d/%Y %H:%M")
                     title = e.get("title","")
                     label = f"{s_val} → {e_val} | {title} [{e['extendedProps']['shift_id']}]"
                     options.append((label, e["extendedProps"]["shift_id"]))
@@ -592,8 +611,8 @@ with tab_calendar:
                 if events:
                     options = []
                     for e in events:
-                        s_val = pd.to_datetime(e["start"]).strftime("%Y-%m-%d %H:%M")
-                        e_val = pd.to_datetime(e["end"]).strftime("%Y-%m-%d %H:%M")
+                        s_val = pd.to_datetime(e["start"]).strftime("%m/%d/%Y %H:%M")
+                        e_val = pd.to_datetime(e["end"]).strftime("%m/%d/%Y %H:%M")
                         title = e.get("title","")
                         label = f"{s_val} → {e_val} | {title} [{e['extendedProps']['shift_id']}]"
                         options.append((label, e["extendedProps"]["shift_id"]))
@@ -710,8 +729,8 @@ with tab_shifts_table:
         out = df.copy()
         out["Provider"] = out["provider_id"].map(pmap)
         out["Client"] = out["client_id"].map(cmap)
-        out["Start"] = pd.to_datetime(out["start_datetime"]).dt.strftime("%Y-%m-%d %H:%M")
-        out["End"] = pd.to_datetime(out["end_datetime"]).dt.strftime("%Y-%m-%d %H:%M")
+        out["Start"] = pd.to_datetime(out["start_datetime"]).dt.strftime("%m/%d/%Y %H:%M")
+        out["End"] = pd.to_datetime(out["end_datetime"]).dt.strftime("%m/%d/%Y %H:%M")
         return out[["shift_id","Provider","Client","Start","End","shift_type","notes"]]
 
     table_df = attach_names(df_shifts_month if limit_to_month else df_shifts_filtered)
@@ -809,8 +828,8 @@ with tab_shifts_table:
         out = df.copy()
         out["Provider"] = out["provider_id"].map(pmap)
         out["Client"] = out["client_id"].map(cmap)
-        out["Start"] = pd.to_datetime(out["start_datetime"]).dt.strftime("%Y-%m-%d %H:%M")
-        out["End"] = pd.to_datetime(out["end_datetime"]).dt.strftime("%Y-%m-%d %H:%M")
+        out["Start"] = pd.to_datetime(out["start_datetime"]).dt.strftime("%m/%d/%Y %H:%M")
+        out["End"] = pd.to_datetime(out["end_datetime"]).dt.strftime("%m/%d/%Y %H:%M")
         return out[["shift_id","Provider","Client","Start","End","shift_type","notes"]]
 
     st.dataframe(attach_names(df_shifts), use_container_width=True, hide_index=True)
