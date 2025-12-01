@@ -450,7 +450,7 @@ with tab_calendar:
                                 st.session_state.clicked_shift = {"shift_id": id_by_label[pick]}
                                 st.rerun()
                     # If a shift id is present, render the actual editor
-                    cs = st.session_state.get("clicked_shift") {cs.get('title','')}"):
+                    cs = st.session_state.get("clicked_shift")
                     # Load fresh row from DB in case it changed
                     with engine.begin() as conn:
                         row = conn.execute(select(shifts).where(shifts.c.shift_id == cs["shift_id"])).mappings().first()
