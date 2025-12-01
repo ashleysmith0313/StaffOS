@@ -249,7 +249,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("Quick Add Shift")
-    with st.form("quick_add_shift"):
+    with st.form("quick_add_shift_sidebar"):
         provider_id = None
         client_id = None
         if df_prov.empty or df_cli.empty:
@@ -286,7 +286,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("Quick Add Shift")
-    with st.form("quick_add_shift"):
+    with st.form("quick_add_shift_main"):
         provider_id = None
         client_id = None
         if df_prov.empty or df_cli.empty:
