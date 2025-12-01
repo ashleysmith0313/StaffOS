@@ -5,9 +5,7 @@ from datetime import datetime, date, time, timedelta
 from dateutil.relativedelta import relativedelta
 
 import pandas as pd
-from sqlalchemy import (
-    create_engine, MetaData, Table, Column, Integer, String, DateTime, Time, ForeignKey
-)
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, DateTime, Time, ForeignKey
 from sqlalchemy.sql import select, and_
 import streamlit as st
 
@@ -74,33 +72,16 @@ with engine.begin() as conn:
     metadata.create_all(conn)
 
 # ----------------------
+# Brand Colors
+# ----------------------
+COLOR_DEFAULT = "#96caba"  # mint
+COLOR_DAY = "#065b56"      # teal
+COLOR_NIGHT = "#4b4f54"    # slate
+COLOR_CALL24 = "#fd9074"   # salmon
+
+# ----------------------
 # Helpers
 # ----------------------
-
-def reset_filters(jump_to_today: bool = False):
-    """Safely reset provider/client filters and optionally jump to current month.
-    We POP the widget keys so Streamlit recreates them with default values next run.
-    """
-    st.session_state.pop('prov_filter', None)
-    st.session_state.pop('cli_filter', None)
-    if jump_to_today:
-        today = date.today()
-        st.session_state['selected_year'] = today.year
-        st.session_state['selected_month'] = today.month
-
-def safe_select_index(series, predicate, default=0):
-    try:
-        idx = series.index[series.apply(predicate)][0]
-        return int(idx)
-    except Exception:
-        return int(default)
-
-# Color map for events (FullCalendar)
-COLOR_DEFAULT = "#96caba"
-COLOR_DAY = "#065b56"
-COLOR_NIGHT = "#4b4f54"
-COLOR_CALL24 = "#fd9074"
-
 def parse_time(t: str | time | None) -> time | None:
     if t is None or t == "":
         return None
@@ -136,10 +117,18 @@ def generate_id(prefix: str) -> str:
     ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
     return f"{prefix}_{ts}"
 
+def reset_filters(jump_to_today: bool = False):
+    """Safely reset provider/client filters and optionally jump to current month."""
+    st.session_state.pop('prov_filter', None)
+    st.session_state.pop('cli_filter', None)
+    if jump_to_today:
+        today = date.today()
+        st.session_state['selected_year'] = today.year
+        st.session_state['selected_month'] = today.month
+
 # ----------------------
 # Exporters
 # ----------------------
-
 def export_qgenda_csv(conn, start_dt: datetime, end_dt: datetime) -> str:
     q = (
         select(
@@ -181,7 +170,6 @@ def export_qgenda_csv(conn, start_dt: datetime, end_dt: datetime) -> str:
             "StartDateTime","EndDateTime","ShiftType","Notes"
         ]]
     out_path = os.path.join(EXPORTS_DIR, f"qgenda_export_{start_dt.date()}_to_{end_dt.date()}.csv")
-    # Format datetimes as mm/dd/yyyy HH:MM for export
     if not df.empty:
         for col in ["StartDateTime","EndDateTime"]:
             df[col] = pd.to_datetime(df[col]).dt.strftime("%m/%d/%Y %H:%M")
@@ -225,7 +213,6 @@ def export_table_template(name: str) -> bytes:
 # ----------------------
 # UI
 # ----------------------
-
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
 st.caption("Monthly scheduling with real-time calendar, CSV import/export, and QGenda-friendly export.")
@@ -235,6 +222,7 @@ if 'show_shift_modal' not in st.session_state:
     st.session_state.show_shift_modal = False
 if 'clicked_shift' not in st.session_state:
     st.session_state.clicked_shift = None
+
 if "selected_year" not in st.session_state:
     today = date.today()
     st.session_state.selected_year = today.year
@@ -250,7 +238,7 @@ with engine.begin() as conn:
     df_creds = df_from_table(conn, credentials)
     df_shifts = df_from_table(conn, shifts)
 
-# Sidebar filters
+# Sidebar
 with st.sidebar:
     st.subheader("Filters & Month")
     month_names = ["January","February","March","April","May","June","July","August","September","October","November","December"]
@@ -259,7 +247,6 @@ with st.sidebar:
         min_year, max_year = min(years_in_data), max(years_in_data)
         years = list(range(min_year-2, max_year+3))
     else:
-        from datetime import date
         cy = date.today().year
         years = list(range(cy-3, cy+4))
 
@@ -333,46 +320,46 @@ with engine.begin() as conn:
     df_creds = df_from_table(conn, credentials)
     df_shifts = df_from_table(conn, shifts)
 
+# Build filtered sets
 first_day, last_day = month_range(st.session_state.selected_year, st.session_state.selected_month)
 
-# --- New filtering model ---
-# 1) Start with ALL shifts
 df_shifts_all = df_shifts.copy()
+df_shifts_filtered = df_shifts_all.copy()
 
-# 2) Apply provider/client filters across ALL time (not just the month)
-if prov_filter != "(All)" and not df_prov.empty:
-    pid = df_prov.loc[df_prov["provider_name"] == prov_filter, "provider_id"].iloc[0] if (df_prov["provider_name"] == prov_filter).any() else None
-    if pid is not None:
-        df_shifts_filtered = df_shifts_all[df_shifts_all["provider_id"] == pid]
-    else:
-        df_shifts_filtered = df_shifts_all.copy()
-else:
-    df_shifts_filtered = df_shifts_all.copy()
+if prov_filter != "(All)" and not df_prov.empty and (df_prov["provider_name"] == prov_filter).any():
+    pid = df_prov.loc[df_prov["provider_name"] == prov_filter, "provider_id"].iloc[0]
+    df_shifts_filtered = df_shifts_filtered[df_shifts_filtered["provider_id"] == pid]
 
-if cli_filter != "(All)" and not df_cli.empty:
-    cid = df_cli.loc[df_cli["client_name"] == cli_filter, "client_id"].iloc[0] if (df_cli["client_name"] == cli_filter).any() else None
-    if cid is not None:
-        df_shifts_filtered = df_shifts_filtered[df_shifts_filtered["client_id"] == cid]
+if cli_filter != "(All)" and not df_cli.empty and (df_cli["client_name"] == cli_filter).any():
+    cid = df_cli.loc[df_cli["client_name"] == cli_filter, "client_id"].iloc[0]
+    df_shifts_filtered = df_shifts_filtered[df_shifts_filtered["client_id"] == cid]
 
-# 3) For the calendar, we create a month-limited view of the filtered set
 df_shifts_month = df_shifts_filtered[
     (df_shifts_filtered["start_datetime"] >= pd.Timestamp(first_day)) &
     (df_shifts_filtered["end_datetime"] <= pd.Timestamp(last_day) + pd.Timedelta(days=1))
 ] if not df_shifts_filtered.empty else df_shifts_filtered.copy()
 
-# (We will use df_shifts_month only for the Calendar tab; the Shifts Table uses df_shifts_filtered)
-# ---------------------------
+# Auto-fix broken filters
+if safe_mode:
+    if prov_filter != "(All)" and (df_prov.empty or not (df_prov["provider_name"] == prov_filter).any()):
+        st.info("Provider filter was invalid and has been reset to (All).")
+        reset_filters(jump_to_today=False)
+        st.rerun()
+    if cli_filter != "(All)" and (df_cli.empty or not (df_cli["client_name"] == cli_filter).any()):
+        st.info("Client filter was invalid and has been reset to (All).")
+        reset_filters(jump_to_today=False)
+        st.rerun()
 
 # Tabs
-
-tab_calendar, tab_shifts_table, tab_providers, tab_clients, tab_credentials, tab_io, tab_settings = st.tabs([
-    "📅 Calendar", "📋 Shifts (Table)", "👩‍⚕️ Providers", "🏥 Clients", "🔐 Credentials", "⬆️⬇️ Upload/Download", "⚙️ Settings"
+tab_calendar, tab_shifts_table, tab_bulk, tab_providers, tab_clients, tab_credentials, tab_io, tab_settings = st.tabs([
+    "📅 Calendar", "📋 Shifts (Table)", "🧰 Bulk Add", "👩‍⚕️ Providers", "🏥 Clients", "🔐 Credentials", "⬆️⬇️ Upload/Download", "⚙️ Settings"
 ])
 
 # Calendar
 with tab_calendar:
     st.subheader(f"Monthly View — {first_day.strftime('%B %Y')}")
-    # Build events for the calendar
+
+    # Build events from ALL-TIME filtered shifts
     events = []
     if not df_shifts_filtered.empty:
         pmap = {r["provider_id"]: r["provider_name"] for _, r in df_prov.iterrows()} if not df_prov.empty else {}
@@ -416,25 +403,58 @@ with tab_calendar:
         }
         with st.container():
             cal_state = st_calendar(events=events, options=cal_options, key="main_calendar")
-            # Compact trigger (works even if event clicks are blocked by the environment)
+
+            # Legend
+            st.markdown("**Legend**")
+            lc1, lc2, lc3, lc4 = st.columns(4)
+            with lc1:
+                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DEFAULT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Other</div>', unsafe_allow_html=True)
+            with lc2:
+                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DAY};display:inline-block;margin-right:8px;border-radius:3px;"></span>Day</div>', unsafe_allow_html=True)
+            with lc3:
+                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_NIGHT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Night</div>', unsafe_allow_html=True)
+            with lc4:
+                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_CALL24};display:inline-block;margin-right:8px;border-radius:3px;"></span>24h Call</div>', unsafe_allow_html=True)
+
+            # Compact trigger button to open modal editor (works even if clicks are blocked)
             top_c1, top_c2 = st.columns([1,6])
             with top_c1:
                 if st.button("📝 Edit shift…", help="Open shift editor", key="open_shift_modal_btn"):
                     st.session_state.show_shift_modal = True
-                    st.session_state.clicked_shift = st.session_state.clicked_shift or {}
+                    if not st.session_state.get("clicked_shift"):
+                        st.session_state.clicked_shift = None
                     st.rerun()
             with top_c2:
                 pass
 
-            # Open modal if a shift was clicked
-            if st.session_state.get("show_shift_modal") and st.session_state.get("clicked_shift"):
-                cs = st.session_state.clicked_shift
+            # Handle click -> open modal
+            if cal_state and cal_state.get("clickedEvent"):
+                ev = cal_state["clickedEvent"]
+                st.session_state.clicked_shift = {
+                    "shift_id": ev["extendedProps"]["shift_id"],
+                    "provider_id": ev["extendedProps"]["provider_id"],
+                    "client_id": ev["extendedProps"]["client_id"],
+                    "notes": ev["extendedProps"].get("notes",""),
+                    "start": ev["start"],
+                    "end": ev["end"],
+                    "title": ev.get("title","")
+                }
+                st.session_state.show_shift_modal = True
+                st.rerun()
+            else:
+                st.info("Tip: click a calendar event to edit it. If clicking doesn't open a form, use the 📝 button above or the Shifts (Table) tab.")
+
+            # Modal editor
+            if st.session_state.get("show_shift_modal"):
+                cs = st.session_state.get("clicked_shift")
                 with st.modal("Shift editor"):
-                    # If we didn't arrive via a specific click, let the user choose a shift first
-                    pre = st.session_state.get("clicked_shift")
-                    if not pre:
+                    # If no clicked shift, let user choose one from events
+                    if not cs:
                         if not events:
                             st.info("No shifts to edit in the current filters.")
+                            if st.button("Close"):
+                                st.session_state.show_shift_modal = False
+                                st.rerun()
                         else:
                             labels = []
                             id_by_label = {}
@@ -449,143 +469,91 @@ with tab_calendar:
                             if st.button("Open selected"):
                                 st.session_state.clicked_shift = {"shift_id": id_by_label[pick]}
                                 st.rerun()
-                    # If a shift id is present, render the actual editor
+                    # Render editor if shift selected
                     cs = st.session_state.get("clicked_shift")
-                    # Load fresh row from DB in case it changed
-                    with engine.begin() as conn:
-                        row = conn.execute(select(shifts).where(shifts.c.shift_id == cs["shift_id"])).mappings().first()
-                    if row is None:
-                        st.warning("This shift no longer exists.")
-                        if st.button("Close"):
-                            st.session_state.show_shift_modal = False
-                            st.rerun()
-                    else:
-                        st.write("**Shift ID:**", row["shift_id"])
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            prov_options = df_prov["provider_name"].tolist() if not df_prov.empty else ["(none)"]
-                            prov_index = 0
-                            if not df_prov.empty and (df_prov["provider_id"] == row["provider_id"]).any():
-                                prov_index = int(df_prov.index[df_prov["provider_id"]==row["provider_id"]][0])
-                            prov_name_edit = st.selectbox("Provider", options=prov_options, index=min(prov_index, max(len(prov_options)-1,0)))
-                        with c2:
-                            cli_options = df_cli["client_name"].tolist() if not df_cli.empty else ["(none)"]
-                            cli_index = 0
-                            if not df_cli.empty and (df_cli["client_id"] == row["client_id"]).any():
-                                cli_index = int(df_cli.index[df_cli["client_id"]==row["client_id"]][0])
-                            cli_name_edit = st.selectbox("Client", options=cli_options, index=min(cli_index, max(len(cli_options)-1,0)))
+                    if cs and cs.get("shift_id"):
+                        with engine.begin() as conn:
+                            row = conn.execute(select(shifts).where(shifts.c.shift_id == cs["shift_id"])).mappings().first()
+                        if row is None:
+                            st.warning("This shift no longer exists.")
+                            if st.button("Close"):
+                                st.session_state.show_shift_modal = False
+                                st.rerun()
+                        else:
+                            st.write("**Shift ID:**", row["shift_id"])
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                prov_options = df_prov["provider_name"].tolist() if not df_prov.empty else ["(none)"]
+                                prov_index = 0
+                                if not df_prov.empty and (df_prov["provider_id"] == row["provider_id"]).any():
+                                    prov_index = int(df_prov.index[df_prov["provider_id"]==row["provider_id"]][0])
+                                prov_name_edit = st.selectbox("Provider", options=prov_options, index=min(prov_index, max(len(prov_options)-1,0)))
+                            with c2:
+                                cli_options = df_cli["client_name"].tolist() if not df_cli.empty else ["(none)"]
+                                cli_index = 0
+                                if not df_cli.empty and (df_cli["client_id"] == row["client_id"]).any():
+                                    cli_index = int(df_cli.index[df_cli["client_id"]==row["client_id"]][0])
+                                cli_name_edit = st.selectbox("Client", options=cli_options, index=min(cli_index, max(len(cli_options)-1,0)))
 
-                        start_val = pd.to_datetime(row["start_datetime"]).to_pydatetime()
-                        end_val = pd.to_datetime(row["end_datetime"]).to_pydatetime()
+                            start_val = pd.to_datetime(row["start_datetime"]).to_pydatetime()
+                            end_val = pd.to_datetime(row["end_datetime"]).to_pydatetime()
 
-                        c3, c4 = st.columns(2)
-                        with c3:
-                            start_date_edit = st.date_input("Start Date", value=start_val.date(), key=f"md_{row['shift_id']}_sd")
-                            start_time_edit = st.time_input("Start Time", value=start_val.time(), key=f"md_{row['shift_id']}_st")
-                        with c4:
-                            is_24h_edit = st.checkbox("24-hour call shift", value=(end_val - start_val).total_seconds() == 24*3600, key=f"md_{row['shift_id']}_24")
-                            end_date_edit = st.date_input("End Date", value=end_val.date(), disabled=is_24h_edit, key=f"md_{row['shift_id']}_ed")
-                            end_time_edit = st.time_input("End Time", value=end_val.time(), disabled=is_24h_edit, key=f"md_{row['shift_id']}_et")
+                            c3, c4 = st.columns(2)
+                            with c3:
+                                start_date_edit = st.date_input("Start Date", value=start_val.date(), key=f"md_{row['shift_id']}_sd")
+                                start_time_edit = st.time_input("Start Time", value=start_val.time(), key=f"md_{row['shift_id']}_st")
+                            with c4:
+                                is_24h_edit = st.checkbox("24-hour call shift", value=(end_val - start_val).total_seconds() == 24*3600, key=f"md_{row['shift_id']}_24")
+                                end_date_edit = st.date_input("End Date", value=end_val.date(), disabled=is_24h_edit, key=f"md_{row['shift_id']}_ed")
+                                end_time_edit = st.time_input("End Time", value=end_val.time(), disabled=is_24h_edit, key=f"md_{row['shift_id']}_et")
 
-                        shift_type_edit = st.text_input("Shift Type", value=row.get("shift_type") or "Day", key=f"md_{row['shift_id']}_type")
-                        notes_edit = st.text_input("Notes", value=row.get("notes") or "", key=f"md_{row['shift_id']}_notes")
+                            shift_type_edit = st.text_input("Shift Type", value=row.get("shift_type") or "Day", key=f"md_{row['shift_id']}_type")
+                            notes_edit = st.text_input("Notes", value=row.get("notes") or "", key=f"md_{row['shift_id']}_notes")
 
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            save = st.button("Save changes")
-                        with col2:
-                            dup = st.button("Duplicate")
-                        with col3:
-                            delete = st.button("Delete")
-                        with col4:
-                            close = st.button("Close")
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                save = st.button("Save changes")
+                            with col2:
+                                dup = st.button("Duplicate")
+                            with col3:
+                                delete = st.button("Delete")
+                            with col4:
+                                close = st.button("Close")
 
-                        if delete:
-                            with engine.begin() as conn:
-                                delete_by_id(conn, shifts, "shift_id", row["shift_id"])
-                            st.success("Deleted shift.")
-                            st.session_state.show_shift_modal = False
-                            st.rerun()
+                            if delete:
+                                with engine.begin() as conn:
+                                    delete_by_id(conn, shifts, "shift_id", row["shift_id"])
+                                st.success("Deleted shift.")
+                                st.session_state.show_shift_modal = False
+                                st.rerun()
 
-                        if save or dup:
-                            new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0] if prov_name_edit in (df_prov["provider_name"].tolist() if not df_prov.empty else []) else row["provider_id"]
-                            new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0] if cli_name_edit in (df_cli["client_name"].tolist() if not df_cli.empty else []) else row["client_id"]
-                            start_dt_new = datetime.combine(start_date_edit, start_time_edit)
-                            if is_24h_edit:
-                                end_dt_new = start_dt_new + timedelta(hours=24)
-                            else:
-                                end_dt_new = datetime.combine(end_date_edit, end_time_edit)
+                            if save or dup:
+                                new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0] if prov_name_edit in (df_prov["provider_name"].tolist() if not df_prov.empty else []) else row["provider_id"]
+                                new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0] if cli_name_edit in (df_cli["client_name"].tolist() if not df_cli.empty else []) else row["client_id"]
+                                start_dt_new = datetime.combine(start_date_edit, start_time_edit)
+                                if is_24h_edit:
+                                    end_dt_new = start_dt_new + timedelta(hours=24)
+                                else:
+                                    end_dt_new = datetime.combine(end_date_edit, end_time_edit)
 
-                            new_row = {
-                                "shift_id": row["shift_id"] if save else generate_id("S"),
-                                "provider_id": new_prov_id,
-                                "client_id": new_cli_id,
-                                "start_datetime": start_dt_new,
-                                "end_datetime": end_dt_new,
-                                "shift_type": shift_type_edit,
-                                "notes": notes_edit,
-                            }
-                            with engine.begin() as conn:
-                                upsert(conn, shifts, new_row, key="shift_id")
-                            st.success("Saved." if save else "Duplicated.")
-                            st.session_state.show_shift_modal = False
-                            st.rerun()
+                                new_row = {
+                                    "shift_id": row["shift_id"] if save else generate_id("S"),
+                                    "provider_id": new_prov_id,
+                                    "client_id": new_cli_id,
+                                    "start_datetime": start_dt_new,
+                                    "end_datetime": end_dt_new,
+                                    "shift_type": shift_type_edit,
+                                    "notes": notes_edit,
+                                }
+                                with engine.begin() as conn:
+                                    upsert(conn, shifts, new_row, key="shift_id")
+                                st.success("Saved." if save else "Duplicated.")
+                                st.session_state.show_shift_modal = False
+                                st.rerun()
 
-                        if close:
-                            st.session_state.show_shift_modal = False
-                            st.rerun()
-            # Legend
-            st.markdown("**Legend**")
-            lc1, lc2, lc3, lc4 = st.columns(4)
-            with lc1:
-                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DEFAULT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Other</div>', unsafe_allow_html=True)
-            with lc2:
-                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DAY};display:inline-block;margin-right:8px;border-radius:3px;"></span>Day</div>', unsafe_allow_html=True)
-            with lc3:
-                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_NIGHT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Night</div>', unsafe_allow_html=True)
-            with lc4:
-                st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_CALL24};display:inline-block;margin-right:8px;border-radius:3px;"></span>24h Call</div>', unsafe_allow_html=True)
-
-            if cal_state and cal_state.get("clickedEvent"):
-                ev = cal_state["clickedEvent"]
-                # Save the clicked shift into session and open modal
-                st.session_state.clicked_shift = {
-                    "shift_id": ev["extendedProps"]["shift_id"],
-                    "provider_id": ev["extendedProps"]["provider_id"],
-                    "client_id": ev["extendedProps"]["client_id"],
-                    "notes": ev["extendedProps"].get("notes",""),
-                    "start": ev["start"],
-                    "end": ev["end"],
-                    "title": ev.get("title","")
-                }
-                st.session_state.show_shift_modal = True
-                st.rerun()
-
-                if save or dup:
-                    new_prov_id = df_prov.loc[df_prov["provider_name"] == prov_name_edit, "provider_id"].iloc[0] if prov_name_edit in (df_prov["provider_name"].tolist() if not df_prov.empty else []) else prov_id
-                    new_cli_id = df_cli.loc[df_cli["client_name"] == cli_name_edit, "client_id"].iloc[0] if cli_name_edit in (df_cli["client_name"].tolist() if not df_cli.empty else []) else cli_id
-                    start_dt_new = datetime.combine(start_date_edit, start_time_edit)
-                    if is_24h_edit:
-                        end_dt_new = start_dt_new + timedelta(hours=24)
-                    else:
-                        end_dt_new = datetime.combine(end_date_edit, end_time_edit)
-
-                    row = {
-                        "shift_id": sid if save else generate_id("S"),
-                        "provider_id": new_prov_id,
-                        "client_id": new_cli_id,
-                        "start_datetime": start_dt_new,
-                        "end_datetime": end_dt_new,
-                        "shift_type": shift_type_edit,
-                        "notes": notes_edit,
-                    }
-                    with engine.begin() as conn:
-                        upsert(conn, shifts, row, key="shift_id")
-                    st.success("Saved." if save else "Duplicated.")
-                    st.rerun()
-            else:
-                st.info("Tip: click a calendar event to edit it. If clicking doesn't open a form, use the Shifts (Table) tab to edit.")
-
+                            if close:
+                                st.session_state.show_shift_modal = False
+                                st.rerun()
     else:
         st.warning("Calendar component not available — showing simple month table.")
         days = pd.date_range(first_day, last_day, freq="D")
@@ -601,18 +569,48 @@ with tab_calendar:
     st.subheader("Export")
     colx, coly, colz = st.columns(3)
     with colx:
-        start = st.date_input("Export Start", value=first_day)
+        exp_start = st.date_input("Export Start", value=first_day)
     with coly:
-        end = st.date_input("Export End", value=last_day)
+        exp_end = st.date_input("Export End", value=last_day)
     with colz:
         if st.button("Export QGenda-friendly CSV", use_container_width=True):
-            path = export_qgenda_csv(engine.begin(), datetime.combine(start, time.min), datetime.combine(end, time.max))
+            path = export_qgenda_csv(engine.begin(), datetime.combine(exp_start, time.min), datetime.combine(exp_end, time.max))
             st.success(f"Exported to {path}")
             with open(path, "rb") as f:
                 st.download_button("Download CSV", f, file_name=os.path.basename(path), mime="text/csv")
+
+# Shifts table (diagnostics / power users) with filters and inline editor
 with tab_shifts_table:
     st.subheader("Shifts — All Time (filtered by Provider/Client)")
-    limit_to_month = st.checkbox("Limit to current month", value=False, help="Turn on to view only the currently selected month in this table.")
+    with st.expander("Filters", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            date_filter_on = st.checkbox("Filter by date range", value=False, key="tbl_date_on")
+            date_from = st.date_input("From", value=first_day, key="tbl_from")
+        with c2:
+            date_to = st.date_input("To", value=last_day, key="tbl_to")
+            only_24h = st.checkbox("Only 24-hour shifts", value=False, key="tbl_24")
+        with c3:
+            provider_multi = st.multiselect("Providers", options=(df_prov["provider_name"].tolist() if not df_prov.empty else []), key="tbl_prov")
+            client_multi = st.multiselect("Clients", options=(df_cli["client_name"].tolist() if not df_cli.empty else []), key="tbl_cli")
+            type_contains = st.text_input("Shift type contains", value="", key="tbl_type_like")
+
+    tbl_df = df_shifts_filtered.copy()
+    if date_filter_on and not tbl_df.empty:
+        tbl_df = tbl_df[(tbl_df["start_datetime"] >= pd.Timestamp(date_from)) & (tbl_df["end_datetime"] <= pd.Timestamp(date_to) + pd.Timedelta(days=1))]
+    if only_24h and not tbl_df.empty:
+        dur = (pd.to_datetime(tbl_df["end_datetime"]) - pd.to_datetime(tbl_df["start_datetime"])).dt.total_seconds() / 3600.0
+        tbl_df = tbl_df[abs(dur - 24.0) < 0.01]
+    if provider_multi and not tbl_df.empty:
+        pids = df_prov[df_prov["provider_name"].isin(provider_multi)]["provider_id"].tolist()
+        tbl_df = tbl_df[tbl_df["provider_id"].isin(pids)]
+    if client_multi and not tbl_df.empty:
+        cids = df_cli[df_cli["client_name"].isin(client_multi)]["client_id"].tolist()
+        tbl_df = tbl_df[tbl_df["client_id"].isin(cids)]
+    if type_contains and not tbl_df.empty:
+        tbl_df = tbl_df[tbl_df["shift_type"].fillna("").str.contains(type_contains, case=False, na=False)]
+
+    limit_to_month = st.checkbox("Limit to current month", value=False, help="Legacy toggle; use the Filters above for custom ranges.")
 
     def attach_names(df):
         if df.empty:
@@ -626,13 +624,12 @@ with tab_shifts_table:
         out["End"] = pd.to_datetime(out["end_datetime"]).dt.strftime("%m/%d/%Y %H:%M")
         return out[["shift_id","Provider","Client","Start","End","shift_type","notes"]]
 
-    table_df = attach_names(df_shifts_month if limit_to_month else df_shifts_filtered)
+    table_df = attach_names((df_shifts_month if limit_to_month else tbl_df))
     st.dataframe(table_df, use_container_width=True, hide_index=True)
-    st.caption("Tip: Use the editor below to modify a specific shift directly from this tab.")
+    st.caption("Use the editor below to modify a specific shift.")
 
-    # --- Inline editor ---
+    # Inline editor
     if not table_df.empty:
-        # Build a readable label for each shift to choose from
         options = []
         for _, r in table_df.iterrows():
             label = f"{r['Start']} → {r['End']} | {r['Provider']} @ {r['Client']} | {r['shift_type']} [{r['shift_id']}]"
@@ -640,10 +637,9 @@ with tab_shifts_table:
         labels = [o[0] for o in options]
         ids = {o[0]: o[1] for o in options}
 
-        selected_label = st.selectbox("Select a shift to edit", options=labels)
+        selected_label = st.selectbox("Select a shift to edit", options=labels, key="table_editor_select")
         selected_id = ids[selected_label]
 
-        # Load the raw row for the selected shift from DB
         with engine.begin() as conn:
             row = conn.execute(select(shifts).where(shifts.c.shift_id == selected_id)).mappings().first()
 
@@ -710,22 +706,84 @@ with tab_shifts_table:
                 st.success("Saved." if save else "Duplicated.")
                 st.rerun()
     else:
-        st.info("No shifts in the current month after filters. Try clearing filters or switching months.")
+        st.info("No shifts after filters.")
 
-    def attach_names(df):
-        if df.empty:
-            return df
-        pmap = {r["provider_id"]: r["provider_name"] for _, r in df_prov.iterrows()} if not df_prov.empty else {}
-        cmap = {r["client_id"]: r["client_name"] for _, r in df_cli.iterrows()} if not df_cli.empty else {}
-        out = df.copy()
-        out["Provider"] = out["provider_id"].map(pmap)
-        out["Client"] = out["client_id"].map(cmap)
-        out["Start"] = pd.to_datetime(out["start_datetime"]).dt.strftime("%m/%d/%Y %H:%M")
-        out["End"] = pd.to_datetime(out["end_datetime"]).dt.strftime("%m/%d/%Y %H:%M")
-        return out[["shift_id","Provider","Client","Start","End","shift_type","notes"]]
+# ----------------
+# Bulk Add Shifts
+# ----------------
+with tab_bulk:
+    st.subheader("Bulk Add Shifts (date range)")
+    st.caption("Create many shifts at once across a date range. Choose which weekdays to include.")
 
-    st.dataframe(attach_names(df_shifts), use_container_width=True, hide_index=True)
-    st.caption("If your event is missing from the Calendar, check here first.")
+    if df_prov.empty or df_cli.empty:
+        st.info("Add at least one Provider and one Client first.")
+    else:
+        with st.form("bulk_add_shifts"):
+            c1, c2 = st.columns(2)
+            with c1:
+                prov_name_bulk = st.selectbox("Provider", options=df_prov["provider_name"].tolist(), key="bulk_provider")
+            with c2:
+                cli_name_bulk = st.selectbox("Client", options=df_cli["client_name"].tolist(), key="bulk_client")
+
+            c3, c4 = st.columns(2)
+            with c3:
+                range_start = st.date_input("Start date", key="bulk_start")
+            with c4:
+                range_end = st.date_input("End date", key="bulk_end")
+
+            wkdays = st.multiselect(
+                "Days of week to include",
+                options=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],
+                default=["Mon","Tue","Wed","Thu","Fri"]
+            )
+            c5, c6 = st.columns(2)
+            with c5:
+                start_t_bulk = st.time_input("Start time", key="bulk_start_time")
+                is_24h_bulk = st.checkbox("24-hour call (each day)", value=False, key="bulk_24h")
+            with c6:
+                end_t_bulk = st.time_input("End time", disabled=is_24h_bulk, key="bulk_end_time")
+
+            shift_type_bulk = st.text_input("Shift type", value="Call (24h)" if is_24h_bulk else "Day", key="bulk_type")
+            notes_bulk = st.text_input("Notes", value="", key="bulk_notes")
+            skip_existing = st.checkbox("Skip days where this provider already has a shift at this client", value=True, key="bulk_skip")
+
+            submitted_bulk = st.form_submit_button("Create shifts")
+            if submitted_bulk:
+                created = 0
+                skipped = 0
+                prov_id_bulk = df_prov.loc[df_prov["provider_name"] == prov_name_bulk, "provider_id"].iloc[0]
+                cli_id_bulk = df_cli.loc[df_cli["client_name"] == cli_name_bulk, "client_id"].iloc[0]
+                # existing dates for this provider+client
+                existing_dates = set()
+                if not df_shifts.empty:
+                    mask = (df_shifts["provider_id"] == prov_id_bulk) & (df_shifts["client_id"] == cli_id_bulk)
+                    for _, r in df_shifts.loc[mask].iterrows():
+                        existing_dates.add(pd.to_datetime(r["start_datetime"]).date())
+                # iterate date range
+                d = pd.to_datetime(range_start).date()
+                end_d = pd.to_datetime(range_end).date()
+                weekdays_short = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+                while d <= end_d:
+                    if weekdays_short[d.weekday()] in wkdays:
+                        if skip_existing and d in existing_dates:
+                            skipped += 1
+                        else:
+                            start_dt = datetime.combine(d, start_t_bulk)
+                            end_dt = start_dt + timedelta(hours=24) if is_24h_bulk else datetime.combine(d, end_t_bulk)
+                            with engine.begin() as conn:
+                                upsert(conn, shifts, {
+                                    "shift_id": generate_id("S"),
+                                    "provider_id": prov_id_bulk,
+                                    "client_id": cli_id_bulk,
+                                    "start_datetime": start_dt,
+                                    "end_datetime": end_dt,
+                                    "shift_type": shift_type_bulk,
+                                    "notes": notes_bulk,
+                                }, key="shift_id")
+                            created += 1
+                    d = d + pd.Timedelta(days=1)
+                st.success(f"Created {created} shifts. Skipped {skipped}.")
+                st.rerun()
 
 # Providers
 with tab_providers:
