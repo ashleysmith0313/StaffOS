@@ -77,6 +77,20 @@ with engine.begin() as conn:
 # Helpers
 # ----------------------
 
+def safe_select_index(series, predicate, default=0):
+    try:
+        idx = series.index[series.apply(predicate)][0]
+        return int(idx)
+    except Exception:
+        return int(default)
+
+# Color map for events (FullCalendar)
+COLOR_DEFAULT = "#96caba"
+COLOR_DAY = "#065b56"
+COLOR_NIGHT = "#4b4f54"
+COLOR_CALL24 = "#fd9074"
+
+
 def parse_time(t: str | time | None) -> time | None:
     if t is None or t == "":
         return None
@@ -236,6 +250,8 @@ with st.sidebar:
         "Filter by Client", options=["(All)"] + (sorted(df_cli["client_name"].tolist()) if not df_cli.empty else []), key="cli_filter"
     ) if not df_cli.empty else "(All)"
 
+    safe_mode = st.toggle("Safe mode: auto-fix filters", value=True, help="Prevents crashes if a filter choice no longer exists.")
+
     if st.button("Clear all filters (jump to current month)"):
         today = date.today()
         st.session_state.selected_year = today.year
@@ -298,11 +314,23 @@ first_day, last_day = month_range(st.session_state.selected_year, st.session_sta
 if not df_shifts.empty:
     df_shifts = df_shifts[(df_shifts["start_datetime"] >= pd.Timestamp(first_day)) & (df_shifts["end_datetime"] <= pd.Timestamp(last_day) + pd.Timedelta(days=1))]
 if prov_filter != "(All)" and not df_prov.empty:
-    pid = df_prov.loc[df_prov["provider_name"] == prov_filter, "provider_id"].iloc[0]
-    df_shifts = df_shifts[df_shifts["provider_id"] == pid]
+    pid = df_prov.loc[df_prov["provider_name"] == prov_filter, "provider_id"].iloc[0] if (not df_prov.empty and (df_prov["provider_name"] == prov_filter).any()) else None
+    df_shifts = df_shifts[df_shifts["provider_id"] == pid] if pid is not None else df_shifts
 if cli_filter != "(All)" and not df_cli.empty:
-    cid = df_cli.loc[df_cli["client_name"] == cli_filter, "client_id"].iloc[0]
-    df_shifts = df_shifts[df_shifts["client_id"] == cid]
+    cid = df_cli.loc[df_cli["client_name"] == cli_filter, "client_id"].iloc[0] if (not df_cli.empty and (df_cli["client_name"] == cli_filter).any()) else None
+    df_shifts = df_shifts[df_shifts["client_id"] == cid] if cid is not None else df_shifts
+
+
+# Auto-fix broken filters
+if safe_mode:
+    if prov_filter != "(All)" and (df_prov.empty or not (df_prov["provider_name"] == prov_filter).any()):
+        st.session_state.prov_filter = "(All)"
+        st.info("Provider filter was invalid and has been reset to (All).")
+        st.rerun()
+    if cli_filter != "(All)" and (df_cli.empty or not (df_cli["client_name"] == cli_filter).any()):
+        st.session_state.cli_filter = "(All)"
+        st.info("Client filter was invalid and has been reset to (All).")
+        st.rerun()
 
 # Tabs
 tab_calendar, tab_shifts_table, tab_providers, tab_clients, tab_credentials, tab_io, tab_settings = st.tabs([
@@ -343,6 +371,18 @@ with tab_calendar:
         }
         with st.container():
             cal_state = st_calendar(events=events, options=cal_options, key="main_calendar")
+            
+    st.markdown("**Legend**")
+    lc1, lc2, lc3, lc4 = st.columns(4)
+    with lc1:
+        st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DEFAULT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Other</div>', unsafe_allow_html=True)
+    with lc2:
+        st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_DAY};display:inline-block;margin-right:8px;border-radius:3px;"></span>Day', unsafe_allow_html=True)
+    with lc3:
+        st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_NIGHT};display:inline-block;margin-right:8px;border-radius:3px;"></span>Night', unsafe_allow_html=True)
+    with lc4:
+        st.markdown(f'<div style="display:flex;align-items:center;"><span style="width:14px;height:14px;background:{COLOR_CALL24};display:inline-block;margin-right:8px;border-radius:3px;"></span>24h Call', unsafe_allow_html=True)
+
             if cal_state and cal_state.get("clickedEvent"):
                 ev = cal_state["clickedEvent"]
                 st.info(f"Selected: {ev['title']}")
@@ -358,11 +398,13 @@ with tab_calendar:
                 with st.form(f"edit_shift_{sid}"):
                     c1, c2 = st.columns(2)
                     with c1:
-                        prov_name_edit = st.selectbox("Provider", options=df_prov["provider_name"].tolist(),
-                                                      index=int(df_prov.index[df_prov["provider_id"]==prov_id][0]))
+                        prov_options = df_prov["provider_name"].tolist() if not df_prov.empty else ["(none)"]
+                        prov_index = safe_select_index(df_prov["provider_id"] if not df_prov.empty else pd.Series([]), lambda x: x==prov_id, default=0)
+                        prov_name_edit = st.selectbox("Provider", options=prov_options, index=min(prov_index, max(len(prov_options)-1,0)))
                     with c2:
-                        cli_name_edit = st.selectbox("Client", options=df_cli["client_name"].tolist(),
-                                                     index=int(df_cli.index[df_cli["client_id"]==cli_id][0]))
+                        cli_options = df_cli["client_name"].tolist() if not df_cli.empty else ["(none)"]
+                        cli_index = safe_select_index(df_cli["client_id"] if not df_cli.empty else pd.Series([]), lambda x: x==cli_id, default=0)
+                        cli_name_edit = st.selectbox("Client", options=cli_options, index=min(cli_index, max(len(cli_options)-1,0)))
                     c3, c4 = st.columns(2)
                     with c3:
                         start_date_edit = st.date_input("Start Date", value=start_val.date())
