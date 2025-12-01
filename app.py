@@ -210,6 +210,104 @@ def export_table_template(name: str) -> bytes:
     templates[name].to_csv(buf, index=False)
     return buf.getvalue().encode()
 
+
+
+def export_calendar_excel(conn, start_dt: datetime, end_dt: datetime) -> str:
+    """Excel workbook with one sheet per month in range, listing calendar events."""
+    # Pull shifts with joined names
+    q = (
+        select(
+            shifts.c.shift_id,
+            providers.c.provider_name,
+            clients.c.client_name,
+            clients.c.location,
+            shifts.c.start_datetime,
+            shifts.c.end_datetime,
+            shifts.c.shift_type,
+            shifts.c.notes,
+        )
+        .select_from(shifts.join(providers, shifts.c.provider_id == providers.c.provider_id)
+                     .join(clients, shifts.c.client_id == clients.c.client_id))
+        .where(and_(shifts.c.start_datetime >= start_dt, shifts.c.end_datetime <= end_dt))
+        .order_by(shifts.c.start_datetime)
+    )
+    df = pd.DataFrame(engine.begin().execute(q).mappings().all())
+    # Build Excel
+    out_path = os.path.join(EXPORTS_DIR, f"calendar_{start_dt.date()}_to_{end_dt.date()}.xlsx")
+    with pd.ExcelWriter(out_path, engine="xlsxwriter") as writer:
+        if df.empty:
+            pd.DataFrame(columns=["Date","Start","End","Provider","Client","Location","ShiftType","Notes"]).to_excel(writer, index=False, sheet_name="No Events")
+        else:
+            df["Start"] = pd.to_datetime(df["start_datetime"])
+            df["End"] = pd.to_datetime(df["end_datetime"])
+            df["Date"] = df["Start"].dt.date
+            # Sort by start
+            df = df.sort_values("Start")
+            # group by month
+            for (y, m), g in df.groupby([df["Start"].dt.year, df["Start"].dt.month]):
+                sheet = f"{y}-{m:02d}"
+                out = pd.DataFrame({
+                    "Date": g["Start"].dt.strftime("%m/%d/%Y"),
+                    "Start": g["Start"].dt.strftime("%m/%d/%Y %H:%M"),
+                    "End": g["End"].dt.strftime("%m/%d/%Y %H:%M"),
+                    "Provider": g["provider_name"],
+                    "Client": g["client_name"],
+                    "Location": g["location"],
+                    "ShiftType": g["shift_type"].fillna(""),
+                    "Notes": g["notes"].fillna(""),
+                })
+                out.to_excel(writer, index=False, sheet_name=sheet)
+    return out_path
+
+def export_calendar_ics(conn, start_dt: datetime, end_dt: datetime) -> str:
+    """Generate an .ics calendar for the range that can be imported into most calendar apps."""
+    q = (
+        select(
+            shifts.c.shift_id,
+            providers.c.provider_name,
+            clients.c.client_name,
+            shifts.c.start_datetime,
+            shifts.c.end_datetime,
+            shifts.c.shift_type,
+            shifts.c.notes,
+        )
+        .select_from(shifts.join(providers, shifts.c.provider_id == providers.c.provider_id)
+                     .join(clients, shifts.c.client_id == clients.c.client_id))
+        .where(and_(shifts.c.start_datetime >= start_dt, shifts.c.end_datetime <= end_dt))
+        .order_by(shifts.c.start_datetime)
+    )
+    rows = engine.begin().execute(q).mappings().all()
+    def fmt_dt(dt: pd.Timestamp | datetime) -> str:
+        # produce UTC-like floating time in basic format YYYYMMDDTHHMMSS
+        ts = pd.to_datetime(dt)
+        return ts.strftime("%Y%m%dT%H%M%S")
+    ics_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//StaffOS//Calendar Export//EN",
+        "CALSCALE:GREGORIAN"
+    ]
+    for r in rows:
+        title_parts = [str(r["provider_name"]), " @ ", str(r["client_name"])]
+        if r.get("shift_type"):
+            title_parts += [" (", str(r["shift_type"]), ")"]
+        title = "".join(title_parts)
+        desc = (r.get("notes") or "").replace("\n", "\\n")
+        uid = f"{r['shift_id']}@staffos"
+        ics_lines += [
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTART:{fmt_dt(r['start_datetime'])}",
+            f"DTEND:{fmt_dt(r['end_datetime'])}",
+            f"SUMMARY:{title}",
+            f"DESCRIPTION:{desc}",
+            "END:VEVENT",
+        ]
+    ics_lines.append("END:VCALENDAR")
+    out_path = os.path.join(EXPORTS_DIR, f"calendar_{start_dt.date()}_to_{end_dt.date()}.ics")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(ics_lines))
+    return out_path
 # ----------------------
 # UI
 # ----------------------
@@ -575,6 +673,7 @@ with tab_calendar:
 
     st.markdown("---")
     st.subheader("Export")
+    st.caption("Choose a range (up to 366 days). You can export QGenda CSV, Excel-by-month, or an ICS calendar.")
     colx, coly, colz = st.columns(3)
     with colx:
         exp_start = st.date_input("Export Start", value=first_day)
@@ -582,10 +681,35 @@ with tab_calendar:
         exp_end = st.date_input("Export End", value=last_day)
     with colz:
         if st.button("Export QGenda-friendly CSV", use_container_width=True):
-            path = export_qgenda_csv(engine.begin(), datetime.combine(exp_start, time.min), datetime.combine(exp_end, time.max))
-            st.success(f"Exported to {path}")
-            with open(path, "rb") as f:
-                st.download_button("Download CSV", f, file_name=os.path.basename(path), mime="text/csv")
+            if (exp_end - exp_start).days > 366:
+                st.error("Please select a range of 366 days or less.")
+            else:
+                path = export_qgenda_csv(engine.begin(), datetime.combine(exp_start, time.min), datetime.combine(exp_end, time.max))
+                st.success(f"Exported to {path}")
+                with open(path, "rb") as f:
+                    st.download_button("Download CSV", f, file_name=os.path.basename(path), mime="text/csv")
+
+    colxa, colxb, colxc = st.columns(3)
+    with colxa:
+        if st.button("Export Calendar (Excel, monthly sheets)"):
+            if (exp_end - exp_start).days > 366:
+                st.error("Please select a range of 366 days or less.")
+            else:
+                path_xlsx = export_calendar_excel(engine.begin(), datetime.combine(exp_start, time.min), datetime.combine(exp_end, time.max))
+                st.success(f"Exported to {path_xlsx}")
+                with open(path_xlsx, "rb") as f:
+                    st.download_button("Download Excel", f, file_name=os.path.basename(path_xlsx), mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    with colxb:
+        if st.button("Export Calendar (ICS)"):
+            if (exp_end - exp_start).days > 366:
+                st.error("Please select a range of 366 days or less.")
+            else:
+                path_ics = export_calendar_ics(engine.begin(), datetime.combine(exp_start, time.min), datetime.combine(exp_end, time.max))
+                st.success(f"Exported to {path_ics}")
+                with open(path_ics, "rb") as f:
+                    st.download_button("Download ICS", f, file_name=os.path.basename(path_ics), mime="text/calendar")
+    with colxc:
+        st.write("")  # spacer
 
 # Shifts table (diagnostics / power users) with filters and inline editor
 with tab_shifts_table:
