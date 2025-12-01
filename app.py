@@ -362,7 +362,7 @@ with tab_calendar:
                         with engine.begin() as conn:
                             delete_by_id(conn, shifts, "shift_id", ev["extendedProps"]["shift_id"])
                         st.success("Deleted.")
-                        st.experimental_rerun()
+                        st.rerun()
                 with col2:
                     st.write("(Edit flow can be added similarly — to keep MVP simple.)")
     else:
@@ -428,7 +428,7 @@ with tab_providers:
                         "preferred_days": pdays,
                     }, key="provider_id")
                 st.success("Saved provider.")
-                st.experimental_rerun()
+                st.rerun()
 
     st.markdown("### Current Providers")
     st.dataframe(df_prov, use_container_width=True, hide_index=True)
@@ -458,7 +458,7 @@ with tab_clients:
                         "location": loc,
                     }, key="client_id")
                 st.success("Saved client.")
-                st.experimental_rerun()
+                st.rerun()
 
     st.markdown("### Current Clients")
     st.dataframe(df_cli, use_container_width=True, hide_index=True)
@@ -485,7 +485,7 @@ with tab_credentials:
                 with engine.begin() as conn:
                     conn.execute(credentials.insert().values(provider_id=provider_id, client_id=client_id))
                 st.success("Credential added.")
-                st.experimental_rerun()
+                st.rerun()
 
     st.markdown("### Current Credentials")
     st.dataframe(df_creds, use_container_width=True, hide_index=True)
