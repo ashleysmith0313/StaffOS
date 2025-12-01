@@ -831,6 +831,31 @@ with tab_providers:
     with engine.begin() as conn:
         st.dataframe(df_from_table(conn, providers), use_container_width=True, hide_index=True)
 
+# Delete Provider
+    st.markdown("### Delete Provider")
+    if df_prov.empty:
+        st.info("No providers to delete.")
+    else:
+        prov_to_del = st.selectbox("Select provider to delete", options=df_prov["provider_name"].tolist(), key="del_prov_name")
+        cascade = st.checkbox("Also delete this provider's credentials and shifts", value=False, key="del_prov_cascade")
+        if st.button("Delete provider", type="primary", key="del_prov_btn"):
+            pid = df_prov.loc[df_prov["provider_name"] == prov_to_del, "provider_id"].iloc[0]
+            with engine.begin() as conn:
+                # Remove related rows if cascade selected
+                if cascade:
+                    conn.execute(credentials.delete().where(credentials.c.provider_id == pid))
+                    conn.execute(shifts.delete().where(shifts.c.provider_id == pid))
+                else:
+                    # Safety: prevent delete if rows exist
+                    has_creds = pd.notna(pd.Series(conn.execute(select(credentials).where(credentials.c.provider_id == pid)).fetchone())).any() if True else False
+                    has_shifts = pd.notna(pd.Series(conn.execute(select(shifts).where(shifts.c.provider_id == pid)).fetchone())).any() if True else False
+                    if has_creds or has_shifts:
+                        st.error("Provider has existing credentials or shifts. Enable 'Also delete…' to remove them, or clear them first.")
+                        st.stop()
+                conn.execute(providers.delete().where(providers.c.provider_id == pid))
+            st.success(f"Deleted provider: {prov_to_del}")
+            st.rerun()
+
 # Clients
 with tab_clients:
     st.subheader("Manage Clients")
@@ -858,6 +883,29 @@ with tab_clients:
     st.markdown("### Current Clients")
     with engine.begin() as conn:
         st.dataframe(df_from_table(conn, clients), use_container_width=True, hide_index=True)
+
+# Delete Client
+    st.markdown("### Delete Client")
+    if df_cli.empty:
+        st.info("No clients to delete.")
+    else:
+        cli_to_del = st.selectbox("Select client to delete", options=df_cli["client_name"].tolist(), key="del_cli_name")
+        cascade_cli = st.checkbox("Also delete this client's credentials and shifts", value=False, key="del_cli_cascade")
+        if st.button("Delete client", type="primary", key="del_cli_btn"):
+            cid = df_cli.loc[df_cli["client_name"] == cli_to_del, "client_id"].iloc[0]
+            with engine.begin() as conn:
+                if cascade_cli:
+                    conn.execute(credentials.delete().where(credentials.c.client_id == cid))
+                    conn.execute(shifts.delete().where(shifts.c.client_id == cid))
+                else:
+                    has_creds = pd.notna(pd.Series(conn.execute(select(credentials).where(credentials.c.client_id == cid)).fetchone())).any() if True else False
+                    has_shifts = pd.notna(pd.Series(conn.execute(select(shifts).where(shifts.c.client_id == cid)).fetchone())).any() if True else False
+                    if has_creds or has_shifts:
+                        st.error("Client has existing credentials or shifts. Enable 'Also delete…' to remove them, or clear them first.")
+                        st.stop()
+                conn.execute(clients.delete().where(clients.c.client_id == cid))
+            st.success(f"Deleted client: {cli_to_del}")
+            st.rerun()
 
 # Credentials
 with tab_credentials:
