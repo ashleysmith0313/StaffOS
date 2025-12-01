@@ -286,7 +286,7 @@ with st.sidebar:
                     "notes": notes,
                 }, key="shift_id")
             st.success("Shift added.")
-            st.experimental_rerun()
+            st.rerun()
 
 # Re-load after potential write
 with engine.begin() as conn:
