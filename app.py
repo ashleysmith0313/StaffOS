@@ -354,15 +354,15 @@ tab_calendar, tab_shifts_table, tab_providers, tab_clients, tab_credentials, tab
 # Calendar
 with tab_calendar:
     st.subheader(f"Monthly View — {first_day.strftime('%B %Y')}")
-    with st.expander("Debug: Show raw shifts for this month"):
-        st.dataframe(df_shifts_month, use_container_width=True, hide_index=True)
+    with st.expander("Debug: Show raw shifts (all-time, filtered by Provider/Client)"):
+        st.dataframe(df_shifts_filtered, use_container_width=True, hide_index=True)
 
     # Build events for the calendar
     events = []
-    if not df_shifts_month.empty:
+    if not df_shifts_filtered.empty:
         pmap = {r["provider_id"]: r["provider_name"] for _, r in df_prov.iterrows()} if not df_prov.empty else {}
         cmap = {r["client_id"]: r["client_name"] for _, r in df_cli.iterrows()} if not df_cli.empty else {}
-        for _, r in df_shifts_month.iterrows():
+        for _, r in df_shifts_filtered.iterrows():
             prov_name = pmap.get(r["provider_id"], "Unknown Provider")
             cli_name = cmap.get(r["client_id"], "Unknown Client")
             title = f"{prov_name} @ {cli_name} ({r['shift_type']})" if r.get("shift_type") else f"{prov_name} @ {cli_name}"
@@ -677,7 +677,7 @@ with tab_calendar:
         st.warning("Calendar component not available — showing simple month table.")
         days = pd.date_range(first_day, last_day, freq="D")
         table = pd.DataFrame(index=[d.date() for d in days], columns=["Shifts"]).fillna("")
-        for _, r in df_shifts_month.iterrows():
+        for _, r in df_shifts_filtered.iterrows():
             d = pd.to_datetime(r["start_datetime"]).date()
             prov_name = df_prov.loc[df_prov["provider_id"] == r["provider_id"], "provider_name"].iloc[0] if not df_prov.empty else "Unknown"
             cli_name = df_cli.loc[df_cli["client_id"] == r["client_id"], "client_name"].iloc[0] if not df_cli.empty else "Unknown"
