@@ -263,13 +263,61 @@ def export_calendar_excel(conn, start_dt: datetime, end_dt: datetime) -> str:
 
 
 
-def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: datetime) -> str:
+
+def export_calendar_visual_html(df_unused: pd.DataFrame, start_dt: datetime, end_dt: datetime) -> str:
     """
     Create a single self-contained HTML file with one month grid per month in [start_dt, end_dt].
-    Uses brand colors and lists events inside each day cell. No external dependencies.
-    Expects df columns: provider_id, client_id, start_datetime, end_datetime, shift_type, notes.
+    Pulls events directly from DB using overlap logic and current Provider/Client filters in session.
     """
-    # Helper: month iterator
+    # Resolve current filters
+    prov_name = st.session_state.get("prov_filter") if "prov_filter" in st.session_state else "(All)"
+    cli_name = st.session_state.get("cli_filter") if "cli_filter" in st.session_state else "(All)"
+
+    # Query DB with overlap
+    with engine.begin() as _conn:
+        q = (
+            select(
+                shifts.c.shift_id,
+                shifts.c.provider_id,
+                shifts.c.client_id,
+                shifts.c.start_datetime,
+                shifts.c.end_datetime,
+                shifts.c.shift_type,
+                shifts.c.notes
+            )
+        )
+        if prov_name and prov_name != "(All)":
+            pid = _conn.execute(select(providers.c.provider_id).where(providers.c.provider_name == prov_name)).scalar()
+            if pid:
+                q = q.where(shifts.c.provider_id == pid)
+        if cli_name and cli_name != "(All)":
+            cid = _conn.execute(select(clients.c.client_id).where(clients.c.client_name == cli_name)).scalar()
+            if cid:
+                q = q.where(shifts.c.client_id == cid)
+        q = q.where(and_(shifts.c.end_datetime >= start_dt, shifts.c.start_datetime <= end_dt)).order_by(shifts.c.start_datetime)
+        dd = pd.DataFrame(_conn.execute(q).mappings().all())
+
+        # name maps
+        dfp = pd.DataFrame(_conn.execute(select(providers)).mappings().all())
+        dfc = pd.DataFrame(_conn.execute(select(clients)).mappings().all())
+
+    pmap = {r["provider_id"]: r["provider_name"] for _, r in dfp.iterrows()} if not dfp.empty else {}
+    cmap = {r["client_id"]: r["client_name"] for _, r in dfc.iterrows()} if not dfc.empty else {}
+
+    if dd.empty:
+        dd = pd.DataFrame(columns=["provider_id","client_id","start_datetime","end_datetime","shift_type","notes"])
+
+    dd["Start"] = pd.to_datetime(dd["start_datetime"])
+    dd["End"] = pd.to_datetime(dd["end_datetime"])
+    dd.sort_values("Start", inplace=True)
+    dd["Date"] = dd["Start"].dt.date
+
+    events_by_date = {}
+    for _, r in dd.iterrows():
+        d = r["Date"]
+        events_by_date.setdefault(d, []).append(r)
+
+    # Helper: iterate months
     def month_iter(start_d: date, end_d: date):
         cur = date(start_d.year, start_d.month, 1)
         while cur <= end_d:
@@ -279,52 +327,7 @@ def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: da
             else:
                 cur = date(cur.year, cur.month + 1, 1)
 
-    # Build name maps
-    with engine.begin() as conn:
-        dfp = pd.DataFrame(conn.execute(select(providers)).mappings().all())
-        dfc = pd.DataFrame(conn.execute(select(clients)).mappings().all())
-    pmap = {r["provider_id"]: r["provider_name"] for _, r in dfp.iterrows()} if not dfp.empty else {}
-    cmap = {r["client_id"]: r["client_name"] for _, r in dfc.iterrows()} if not dfc.empty else {}
-
-    # Pre-convert datetimes
-    dd = df.copy()
-    if dd.empty:
-        dd = pd.DataFrame(columns=["provider_id","client_id","start_datetime","end_datetime","shift_type","notes"])
-    dd["Start"] = pd.to_datetime(dd["start_datetime"])
-    dd["End"] = pd.to_datetime(dd["end_datetime"])
-
-    # Filter to range
-    dd = dd[((dd["End"] >= pd.Timestamp(start_dt)) & (dd["Start"] <= pd.Timestamp(end_dt)))].copy()
-
-    # Fallback: if empty (e.g., caller passed an empty df), query DB with same range and current filters
-    if dd.empty:
-        prov_name = st.session_state.get("prov_filter") if "prov_filter" in st.session_state else "(All)"
-        cli_name = st.session_state.get("cli_filter") if "cli_filter" in st.session_state else "(All)"
-        with engine.begin() as _conn:
-            q = select(shifts)
-            if prov_name and prov_name != "(All)":
-                pid = _conn.execute(select(providers.c.provider_id).where(providers.c.provider_name == prov_name)).scalar()
-                if pid:
-                    q = q.where(shifts.c.provider_id == pid)
-            if cli_name and cli_name != "(All)":
-                cid = _conn.execute(select(clients.c.client_id).where(clients.c.client_name == cli_name)).scalar()
-                if cid:
-                    q = q.where(shifts.c.client_id == cid)
-            q = q.where(and_(shifts.c.end_datetime >= start_dt, shifts.c.start_datetime <= end_dt)).order_by(shifts.c.start_datetime)
-            dd = pd.DataFrame(_conn.execute(q).mappings().all())
-            if dd.empty:
-                dd = pd.DataFrame(columns=["provider_id","client_id","start_datetime","end_datetime","shift_type","notes"])
-            dd["Start"] = pd.to_datetime(dd["start_datetime"])
-            dd["End"] = pd.to_datetime(dd["end_datetime"])
-    dd.sort_values("Start", inplace=True)
-    # Group events by date
-    dd["Date"] = dd["Start"].dt.date
-    events_by_date = {}
-    for _, r in dd.iterrows():
-        d = r["Date"]
-        events_by_date.setdefault(d, []).append(r)
-
-    # HTML/CSS
+    # CSS & HTML
     css = f"""
     <style>
       body {{ font-family: system-ui, -apple-system, Arial, sans-serif; color:#1e1e1e; }}
@@ -335,16 +338,15 @@ def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: da
       .grid td {{ vertical-align: top; height: 120px; border:1px solid #eee; padding:6px; }}
       .dow {{ background:#d4eae5; font-weight:600; }}
       .daynum {{ font-size: 12px; opacity: 0.7; margin-bottom: 4px; }}
-      .event {{ font-size: 12px; border-radius:6px; padding:4px 6px; margin:4px 0; display:block; background:{'{'}COLOR_DEFAULT{'}'}; }}
-      .event.day {{ background:{'{'}COLOR_DAY{'}'}; color: white; }}
-      .event.night {{ background:{'{'}COLOR_NIGHT{'}'}; color: white; }}
-      .event.call24 {{ background:{'{'}COLOR_CALL24{'}'}; color: white; }}
+      .event {{ font-size: 12px; border-radius:6px; padding:4px 6px; margin:4px 0; display:block; background:{COLOR_DEFAULT}; }}
+      .event.day {{ background:{COLOR_DAY}; color: white; }}
+      .event.night {{ background:{COLOR_NIGHT}; color: white; }}
+      .event.call24 {{ background:{COLOR_CALL24}; color: white; }}
       .legend {{ margin-top:8px; font-size:12px; }}
       .legend span {{ display:inline-flex; align-items:center; margin-right:14px; }}
       .legend i {{ width:12px; height:12px; display:inline-block; margin-right:6px; border-radius:3px;}}
     </style>
     """
-
     html = [f"<!doctype html><html><head><meta charset='utf-8'><title>Calendar {start_dt.date()} to {end_dt.date()}</title>{css}</head><body>"]
     html.append(f"<h1>Calendar — {start_dt.strftime('%m/%d/%Y')} to {end_dt.strftime('%m/%d/%Y')}</h1>")
     html.append(f"<div class='legend'>"
@@ -355,27 +357,14 @@ def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: da
                 f"</div>")
 
     for y, m in month_iter(start_dt.date(), end_dt.date()):
-        # Build month grid
         first = date(y, m, 1)
         last = (first + relativedelta(months=1)) - timedelta(days=1)
-        start_weekday = first.weekday()  # Mon=0..Sun=6
-        # We want Sun..Sat header, so map to that layout
-        # Calculate days: create a list of weeks, each week is 7 dates (or None for padding)
-        days = []
-        cur = first
-        # Fill leading pad (from Sunday)
-        lead = (start_weekday + 1) % 7  # how many days before Monday to reach Sunday
-        week = [None]*7
-        # position of first day in Sun..Sat
-        pos = (first.weekday() + 1) % 7
-        i = pos
-        w = [None]*7
-        d = first
-        # iterate all days placing into weeks
+        # Build week rows (Sun..Sat)
         weeks = []
+        pos = (first.weekday() + 1) % 7  # 0=Sun..6=Sat
         w = [None]*7
-        idx = pos
         dt_iter = first
+        idx = pos
         while dt_iter <= last:
             w[idx] = dt_iter
             if idx == 6:
@@ -388,7 +377,7 @@ def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: da
         if any(x is not None for x in w):
             weeks.append(w)
 
-        # Month title
+        # Render month
         month_label = datetime(y, m, 1).strftime("%B %Y")
         html.append(f"<div class='month'><h2>{month_label}</h2>")
         html.append("<table class='grid'>")
@@ -401,17 +390,11 @@ def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: da
                 else:
                     html.append("<td>")
                     html.append(f"<div class='daynum'>{cell.day}</div>")
-                    # events for this day
                     evs = events_by_date.get(cell, [])
                     for r in evs:
-                        start_str = pd.to_datetime(r['start_datetime']).strftime("%-I%p").lower()
-                        end_str = pd.to_datetime(r['end_datetime']).strftime("%-I%p").lower()
                         title = f"{pmap.get(r['provider_id'],'?')} @ {cmap.get(r['client_id'],'?')}"
-                        label = title
-                        if r.get('shift_type'):
-                            label += f" ({r['shift_type']})"
-                        # classify
-                        dur_h = (pd.to_datetime(r['end_datetime']) - pd.to_datetime(r['start_datetime'])).total_seconds() / 3600.0
+                        label = title + (f" ({r['shift_type']})" if pd.notna(r.get('shift_type')) and str(r.get('shift_type')).strip() else "")
+                        dur_h = (pd.to_datetime(r['end_datetime']) - pd.to_datetime(r['start_datetime'])).total_seconds()/3600.0
                         cls = "event "
                         if abs(dur_h - 24.0) < 0.01:
                             cls += "call24"
@@ -431,6 +414,7 @@ def export_calendar_visual_html(df: pd.DataFrame, start_dt: datetime, end_dt: da
     with open(out_path, "w", encoding="utf-8") as f:
         f.write("".join(html))
     return out_path
+
 def export_calendar_ics(conn, start_dt: datetime, end_dt: datetime) -> str:
     """Generate an .ics calendar for the range that can be imported into most calendar apps."""
     q = (
